@@ -1,16 +1,5 @@
 import { Button, Divider, Drawer, FormControlLabel, IconButton, Radio, RadioGroup } from "@suid/material";
-import {
-    createEffect,
-    createMemo,
-    createSignal,
-    For,
-    Index,
-    on,
-    onCleanup,
-    Show,
-    type Component,
-    type JSX,
-} from "solid-js";
+import { createEffect, createSignal, For, Index, on, onCleanup, Show, type Component, type JSX } from "solid-js";
 import AddIcon from "@suid/icons-material/Add";
 import { videoRepo } from "./database";
 import DeleteIcon from "@suid/icons-material/Delete";
@@ -228,6 +217,8 @@ const VideoContent = () => {
     const [playing, setPlaying] = createSignal(false);
     const [lastTime, setLastTime] = createSignal(0);
 
+    let lastFrameTime = 0;
+
     createEffect(async () => {
         const [data, videoInfo] = await videoRepo.getVideo(hash());
         setInfo(videoInfo);
@@ -255,6 +246,8 @@ const VideoContent = () => {
     const handleSeeked = () => {
         const time = getNextFrameTime();
         video().currentTime = time;
+        console.log(performance.now() - lastFrameTime);
+        lastFrameTime = performance.now();
     };
 
     const play = () => {
@@ -310,7 +303,6 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
 };
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const trak = file.getTrackById(track.id) as any;
     for (const entry of trak.mdia.minf.stbl.stsd.entries) {
         if (entry.avcC || entry.hvcC) {
@@ -337,153 +329,6 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
-export const extractFrames = async (data: ArrayBuffer, onFrame?: (frame: VideoFrame) => void): Promise<void> => {
-    const buffer = data as Mp4BoxBuffer;
-    buffer.fileStart = 0;
-
-    const file = mp4box.createFile();
-    file.onError = (error) => {
-        console.error(error);
-    };
-
-    let resolveFileReady: (v: MP4Info) => void;
-    const waitFileReady = new Promise<MP4Info>((resolve) => (resolveFileReady = resolve));
-
-    let resolveSamplesReady: (v: MP4Sample[]) => void;
-    const waitSamplesReady = new Promise<MP4Sample[]>((resolve) => (resolveSamplesReady = resolve));
-
-    file.onReady = (info) => {
-        console.log("File ready", info);
-        resolveFileReady(info);
-    };
-    file.onSamples = (id, user, s) => {
-        resolveSamplesReady(s);
-    };
-    file.onError = (e) => {
-        console.log(e); // TODO reject
-    };
-
-    file.appendBuffer(buffer);
-    file.flush();
-    const info = await waitFileReady;
-    const track = info.videoTracks[0];
-    file.setExtractionOptions(info.videoTracks[0].id);
-    file.start();
-    const samples = await waitSamplesReady;
-
-    const config: VideoDecoderConfig = {
-        codec: track.codec,
-        codedHeight: track.video.height,
-        codedWidth: track.video.width,
-        description: description(file, track),
-    };
-    const decoder = new VideoDecoder({ output: onFrame, error: console.error });
-    decoder.configure(config);
-    for (const sample of samples) {
-        decoder.decode(sampleToChunk(sample));
-    }
-    await decoder.flush();
-};
-
-class Kokoko {
-    private file: mp4box.MP4File;
-    private track: mp4box.MP4VideoTrack;
-
-    constructor() {
-        const file = mp4box.createFile(false);
-        this.file = file;
-    }
-
-    public async init(content: ArrayBuffer): Promise<MP4Sample> {
-        return new Promise((resolve) => {
-            (content as any).fileStart = 0;
-            this.file.onReady = (info) => {
-                const track = info.tracks[0];
-                this.track = track;
-                this.file.onSamples = (id, user, [sample]) => {
-                    console.log(sample);
-                    this.file.stop();
-                    resolve(sample);
-                };
-                this.file.setExtractionOptions(this.track.id, this.track, { nbSamples: 1 });
-                this.file.start();
-            };
-            this.file.appendBuffer(content as Mp4BoxBuffer);
-            this.file.flush();
-        });
-    }
-
-    public async getNextFrame(): Promise<MP4Sample> {
-        return new Promise((resolve) => {
-            this.file.onSamples = (id, user, [sample]) => {
-                console.log(sample);
-                this.file.stop();
-                resolve(sample);
-            };
-            this.file.setExtractionOptions(this.track.id, this.track, { nbSamples: 1 });
-            this.file.start();
-        });
-    }
-
-    public async *iterate(content: ArrayBuffer) {
-        yield await this.init(content);
-    }
-}
-
-class Kokoko2 {
-    private file: mp4box.MP4File;
-    private sample: number;
-    private numSamples: number;
-
-    private async init(content: ArrayBuffer): Promise<MP4Sample> {
-        const file = mp4box.createFile(false);
-        this.file = file;
-        return new Promise((resolve) => {
-            (content as any).fileStart = 0;
-            this.file.onReady = (info) => {
-                const track = info.tracks[0];
-                this.numSamples = track.nb_samples;
-                this.file.onSamples = (id, user, [sample]) => {
-                    this.file.stop();
-                    resolve(sample);
-                };
-                this.file.setExtractionOptions(track.id, track, { nbSamples: 1 });
-                this.file.start();
-            };
-            this.file.appendBuffer(content as Mp4BoxBuffer);
-            this.file.flush();
-        });
-    }
-
-    private async getNextFrame(): Promise<MP4Sample> {
-        return new Promise((resolve) => {
-            this.file.onSamples = (id, user, [sample]) => {
-                this.file.stop();
-                this.sample = sample.number;
-                resolve(sample);
-            };
-            this.file.start();
-        });
-    }
-
-    public async *iterate(content: ArrayBuffer) {
-        const sample = await this.init(content);
-        if (sample.number === this.numSamples) {
-            return sample;
-        } else {
-            yield sample;
-        }
-        while (true) {
-            const sample = await this.getNextFrame();
-            if (sample.number === this.numSamples) {
-                return sample;
-            } else {
-                yield sample;
-            }
-        }
-    }
-}
-
 class Kokoko3 {
     private file: mp4box.MP4File;
     private numSamples: number;
@@ -505,7 +350,6 @@ class Kokoko3 {
                     codedWidth: track.video.width,
                     description: description(file, track),
                 };
-                console.log(config);
                 this.resolve = resolve;
                 this.decoder = new VideoDecoder({
                     output: (v) => {
@@ -514,7 +358,6 @@ class Kokoko3 {
                     error: console.error,
                 });
                 this.decoder.configure(config);
-                console.log(this.decoder);
 
                 this.file.onSamples = (id, user, [sample]) => {
                     this.file.stop();
@@ -574,6 +417,7 @@ const Mp4Content = () => {
     createEffect(async () => {
         const [{ content }] = await videoRepo.getVideo(hash());
         data = content;
+        q = k.iterate(data);
     });
 
     const playNext = async () => {
@@ -600,29 +444,7 @@ const Mp4Content = () => {
             setPlaying(false);
         } else {
             setPlaying(true);
-            if (!q) q = k.iterate(data);
             await playNext();
-
-            // const { value: s, done } = await q.next();
-            // const c = canvas();
-            // c.width = s.displayWidth;
-            // c.height = s.displayHeight;
-            // c.getContext("2d").drawImage(s, 0, 0);
-            // s.close();
-
-            // if (done) {
-            //     q = k.iterate(data);
-            // } else {
-            //     play();
-            // }
-
-            // for await (const s of k.iterate(data)) {
-            //     const c = canvas();
-            //     c.width = s.displayWidth;
-            //     c.height = s.displayHeight;
-            //     c.getContext("2d").drawImage(s, 0, 0);
-            //     s.close();
-            // }
         }
     };
 

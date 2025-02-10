@@ -195,6 +195,7 @@ declare module "mp4box" {
     }
 
     interface DataStream {
+        getPosition?: () => number;
         position: number;
         buffer: ArrayBuffer;
     }
