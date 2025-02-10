@@ -387,20 +387,26 @@ export const extractFrames = async (data: ArrayBuffer, onFrame?: (frame: VideoFr
 
 class Kokoko {
     private file: mp4box.MP4File;
-    constructor(content: ArrayBuffer) {
+    private track: mp4box.MP4VideoTrack;
+
+    constructor() {
         const file = mp4box.createFile(false);
-        (content as any).fileStart = 0;
-        file.onReady = (info) => {
-            const track = info.tracks[0];
-            file.setExtractionOptions(track.id, track, { nbSamples: 1 });
-            file.start();
-        };
-        file.onSamples = (id, user, [sample]) => {
-            console.log(sample);
-            file.stop();
-        };
-        file.appendBuffer(content as Mp4BoxBuffer);
         this.file = file;
+    }
+
+    public async init(content: ArrayBuffer) {
+        (content as any).fileStart = 0;
+        this.file.onReady = (info) => {
+            const track = info.tracks[0];
+            this.track = track;
+            this.file.setExtractionOptions(track.id, track, { nbSamples: 1 });
+            this.file.start();
+        };
+        this.file.onSamples = (id, user, [sample]) => {
+            console.log(sample);
+            this.file.stop();
+        };
+        this.file.appendBuffer(content as Mp4BoxBuffer);
     }
 
     public async getNextFrame(): Promise<MP4Sample> {
@@ -416,12 +422,12 @@ class Kokoko {
 }
 
 const Mp4Content = () => {
-    let k: Kokoko;
+    const k = new Kokoko();
     const [playing, setPlaying] = createSignal(false);
 
     createEffect(async () => {
         const [{ content }] = await videoRepo.getVideo(hash());
-        k = new Kokoko(content);
+        await k.init(content);
     });
 
     const play = () => {
