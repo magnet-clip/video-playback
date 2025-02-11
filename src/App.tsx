@@ -8,7 +8,7 @@ import PlayArrowIcon from "@suid/icons-material/PlayArrow";
 import SkipNextIcon from "@suid/icons-material/SkipNext";
 import SkipPreviousIcon from "@suid/icons-material/SkipPrevious";
 import PauseIcon from "@suid/icons-material/Pause";
-import mp4box, { DataStream, MP4ArrayBuffer, MP4File, MP4Info, MP4Sample, MP4VideoTrack, Log } from "mp4box";
+import mp4box, { DataStream, MP4ArrayBuffer, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
 
 export type VideoInfo = {
     frames: number;
@@ -407,7 +407,7 @@ class Kokoko3 {
 class Kokoko4 {
     private file: mp4box.MP4File;
     private numSamples: number;
-    private sample: number;
+    public currentFrame: number;
     private decoder: VideoDecoder;
     private resolve: (value: VideoFrame | PromiseLike<VideoFrame>) => void;
 
@@ -416,7 +416,7 @@ class Kokoko4 {
         this.file = file;
         return new Promise((resolve) => {
             (content as any).fileStart = 0;
-            this.file.onReady = (info) => {
+            file.onReady = (info) => {
                 const track = info.tracks[0];
                 this.numSamples = track.nb_samples;
                 const config: VideoDecoderConfig = {
@@ -434,21 +434,21 @@ class Kokoko4 {
                 });
                 this.decoder.configure(config);
 
-                this.file.onSamples = (id, user, [sample]) => {
-                    this.file.stop();
-                    this.sample = sample.number;
+                file.onSamples = (id, user, [sample]) => {
+                    file.stop();
+                    this.currentFrame = sample.number;
                     this.decoder.decode(sampleToChunk(sample));
                     this.decoder.flush();
                 };
-                this.file.setExtractionOptions(track.id, track, { nbSamples: 1 });
-                this.file.start();
+                file.setExtractionOptions(track.id, track, { nbSamples: 1 });
+                file.start();
             };
-            this.file.appendBuffer(content as Mp4BoxBuffer);
-            this.file.flush();
+            file.appendBuffer(content as Mp4BoxBuffer);
+            file.flush();
         });
     }
 
-    public setNextTime(time: number, useRap: boolean) {
+    public setNextTime(time: number, useRap: boolean = false) {
         this.file.seek(time, useRap);
     }
 
@@ -457,8 +457,7 @@ class Kokoko4 {
             this.resolve = resolve;
             this.file.onSamples = (id, user, [sample]) => {
                 this.file.stop();
-                this.sample = sample.number;
-                console.log(sample);
+                this.currentFrame = sample.number;
                 this.decoder.decode(sampleToChunk(sample));
                 this.decoder.flush();
             };
@@ -468,52 +467,63 @@ class Kokoko4 {
 
     public async *iterate(content: ArrayBuffer) {
         const sample = await this.init(content);
-        if (this.sample === this.numSamples - 1) {
+        if (this.currentFrame === this.numSamples - 1) {
             return sample;
         } else {
             yield sample;
         }
         while (true) {
             const sample = await this.getNextFrame();
-            if (this.sample === this.numSamples - 1) {
-                return sample;
-            } else {
-                yield sample;
+            if (this.currentFrame === this.numSamples - 1) {
+                this.setNextTime(0); // default behavior is to return to start
             }
+            yield sample;
+
+            // if (this.sample === this.numSamples - 1) {
+            //     return sample;
+            // } else {
+            //     yield sample;
+            // }
         }
     }
 }
 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    const k = new Kokoko4();
+    const videoManager = new Kokoko4();
     let data: ArrayBuffer;
-    let q: AsyncGenerator<VideoFrame, VideoFrame, unknown>;
+    let frameSource: AsyncGenerator<VideoFrame, VideoFrame, unknown>;
+    let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
     const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
     let lastTime = 0;
 
     createEffect(async () => {
-        const [{ content }] = await videoRepo.getVideo(hash());
+        const [{ content }, videoInfo] = await videoRepo.getVideo(hash());
         data = content;
-        q = k.iterate(data);
+        info = videoInfo;
+        frameSource = videoManager.iterate(data);
     });
 
     const paint = async () => {
-        const { value: s, done } = await q.next();
+        const { value: s, done } = await frameSource.next();
         const c = canvas();
         c.width = s.displayWidth;
         c.height = s.displayHeight;
         c.getContext("2d").drawImage(s, 0, 0);
         s.close();
 
-        if (done) q = k.iterate(data);
+        if (done) frameSource = videoManager.iterate(data);
         return done;
     };
 
     const playNext = async () => {
         if (!playing()) return;
 
+        if (dir() === "bwd") {
+            const nextTime = addFrames(-1) / info.fps;
+            videoManager.setNextTime(nextTime);
+        }
         const done = await paint();
         console.log(performance.now() - lastTime);
         lastTime = performance.now();
@@ -534,8 +544,14 @@ const Mp4Content = () => {
         }
     };
 
+    const addFrames = (n: number): number => {
+        const nextFrame = videoManager.currentFrame + n;
+        return (nextFrame + (info.frames - 1)) % (info.frames - 1);
+    };
+
     const step = async (n: number) => {
-        k.setNextTime(3, false);
+        const nextTime = addFrames(n) / info.fps;
+        videoManager.setNextTime(nextTime);
         await paint();
     };
 
