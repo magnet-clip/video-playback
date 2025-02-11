@@ -329,90 +329,6 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
-class Kokoko4 {
-    private file: mp4box.MP4File;
-    private numSamples: number;
-    public currentFrame: number;
-    private decoder: VideoDecoder;
-    private resolve: (value: VideoFrame | PromiseLike<VideoFrame>) => void;
-
-    private async init(content: ArrayBuffer): Promise<VideoFrame> {
-        const file = mp4box.createFile(false);
-        this.file = file;
-        return new Promise((resolve) => {
-            (content as any).fileStart = 0;
-            file.onReady = (info) => {
-                const track = info.tracks[0];
-                this.numSamples = track.nb_samples;
-                const config: VideoDecoderConfig = {
-                    codec: track.codec,
-                    codedHeight: track.video.height,
-                    codedWidth: track.video.width,
-                    description: description(file, track),
-                };
-                this.resolve = resolve;
-                this.decoder = new VideoDecoder({
-                    output: (v) => {
-                        this.resolve(v);
-                    },
-                    error: console.error,
-                });
-                this.decoder.configure(config);
-
-                file.onSamples = (id, user, [sample]) => {
-                    file.stop();
-                    this.currentFrame = sample.number;
-                    this.decoder.decode(sampleToChunk(sample));
-                    this.decoder.flush();
-                };
-                file.setExtractionOptions(track.id, track, { nbSamples: 1 });
-                file.start();
-            };
-            file.appendBuffer(content as Mp4BoxBuffer);
-            file.flush();
-        });
-    }
-
-    public setNextTime(time: number, useRap: boolean = false) {
-        this.file.seek(time, useRap);
-    }
-
-    private async getNextFrame(): Promise<VideoFrame> {
-        return new Promise<VideoFrame>((resolve) => {
-            this.resolve = resolve;
-            this.file.onSamples = (id, user, [sample]) => {
-                this.file.stop();
-                this.currentFrame = sample.number;
-                this.decoder.decode(sampleToChunk(sample));
-                this.decoder.flush();
-            };
-            this.file.start();
-        });
-    }
-
-    public async *iterate(content: ArrayBuffer) {
-        const sample = await this.init(content);
-        if (this.currentFrame === this.numSamples - 1) {
-            return sample;
-        } else {
-            yield sample;
-        }
-        while (true) {
-            const sample = await this.getNextFrame();
-            if (this.currentFrame === this.numSamples - 1) {
-                this.setNextTime(0); // default behavior is to return to start
-            }
-            yield sample;
-
-            // if (this.sample === this.numSamples - 1) {
-            //     return sample;
-            // } else {
-            //     yield sample;
-            // }
-        }
-    }
-}
-
 class Kokoko5 {
     public currentFrame: number = 0;
     public direction = 1;
@@ -473,11 +389,109 @@ class Kokoko5 {
         }
     }
 }
+const BUFFER = 30;
+const THRESHOLD = 2;
+
+class Kokoko6 {
+    public currentFrame: number = 0;
+    private direction = 1;
+    private numFrames: number;
+    private decoder: VideoDecoder;
+    private samples: MP4Sample[];
+    private videoFrames: VideoFrame[] = [];
+
+    private left: number;
+    private resolve: () => void;
+
+    public async init(content: ArrayBuffer): Promise<void> {
+        const file = mp4box.createFile(false);
+        return new Promise((resolve) => {
+            (content as any).fileStart = 0;
+            file.onReady = (info) => {
+                const track = info.tracks[0];
+                this.numFrames = track.nb_samples;
+                const config: VideoDecoderConfig = {
+                    codec: track.codec,
+                    codedHeight: track.video.height,
+                    codedWidth: track.video.width,
+                    description: description(file, track),
+                };
+                this.decoder = new VideoDecoder({
+                    output: (v) => {
+                        // console.log(v, this.left);
+                        this.left--;
+                        this.videoFrames.push(v);
+                        if (this.left === 0) this.resolve();
+                    },
+                    error: console.error,
+                });
+                this.decoder.configure(config);
+
+                file.onSamples = (id, user, samples) => {
+                    file.stop();
+                    file.flush();
+                    this.samples = samples;
+                    this.prefetch().then(resolve);
+                };
+                file.setExtractionOptions(track.id, track);
+                file.start();
+            };
+            file.appendBuffer(content as Mp4BoxBuffer);
+            file.flush();
+        });
+    }
+
+    public async setDirection(dir: "fwd" | "bwd") {
+        this.direction = dir === "fwd" ? 1 : -1;
+        this.videoFrames = [];
+        await this.prefetch();
+        // TODO prefetch frames
+    }
+
+    private async getNextFrame(): Promise<VideoFrame> {
+        return new Promise<VideoFrame>(async (resolve) => {
+            this.prefetch();
+            const interval = setInterval(() => {
+                if (this.videoFrames.length === 0) return;
+                this.currentFrame = (this.currentFrame + this.numFrames - 1 + this.direction) % (this.numFrames - 1);
+                console.log(this.currentFrame);
+                const v = this.videoFrames.shift();
+                clearInterval(interval);
+                resolve(v);
+            }, 10);
+        });
+    }
+
+    private async prefetch() {
+        return new Promise<void>((resolve) => {
+            if (this.videoFrames.length < THRESHOLD) {
+                let left = BUFFER;
+                let curr = this.currentFrame;
+                while (left > 0) {
+                    const s = this.samples[curr];
+                    curr = (curr + this.numFrames - 1 + this.direction) % (this.numFrames - 1);
+                    this.decoder.decode(sampleToChunk(s));
+                    left--;
+                }
+                this.left = BUFFER;
+                this.resolve = resolve;
+                this.decoder.flush(); // TODO smarter - several in a row
+            } else {
+                resolve();
+            }
+        });
+    }
+
+    public async *iterate(): AsyncGenerator<VideoFrame, VideoFrame, unknown> {
+        while (true) {
+            yield await this.getNextFrame();
+        }
+    }
+}
 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    const videoManager = new Kokoko5();
-    let data: ArrayBuffer;
+    const videoManager = new Kokoko6();
     let frameSource: AsyncGenerator<VideoFrame, VideoFrame, unknown>;
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
@@ -486,46 +500,32 @@ const Mp4Content = () => {
 
     createEffect(async () => {
         const [{ content }, videoInfo] = await videoRepo.getVideo(hash());
-        data = content;
         info = videoInfo;
-        console.log("A");
         await videoManager.init(content);
-        console.log("B");
         frameSource = videoManager.iterate();
     });
 
     createEffect(() => {
-        if (dir() === "bwd") {
-            videoManager.direction = -1;
-        } else {
-            videoManager.direction = 1;
-        }
+        videoManager.setDirection(dir());
     });
 
     const paint = async () => {
-        const { value: s, done } = await frameSource.next();
+        const { value: s } = await frameSource.next();
         const c = canvas();
         c.width = s.displayWidth;
         c.height = s.displayHeight;
         c.getContext("2d").drawImage(s, 0, 0);
         s.close();
-
-        if (done) frameSource = videoManager.iterate();
-        return done;
     };
 
     const playNext = async () => {
         if (!playing()) return;
 
-        const done = await paint();
+        await paint();
         console.log(performance.now() - lastTime);
         lastTime = performance.now();
 
-        if (done) {
-            setPlaying(false);
-        } else {
-            playNext();
-        }
+        playNext();
     };
 
     const play = async () => {
