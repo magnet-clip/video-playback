@@ -1,5 +1,10 @@
 // https://github.com/gpac/mp4box.js/issues/233
 declare module "mp4box" {
+    export namespace Log {
+        let debug: () => void;
+        let setLogLevel: (level: () => void) => void;
+    }
+
     interface MP4MediaTrack {
         id: number;
         created: Date;
@@ -182,6 +187,7 @@ declare module "mp4box" {
         getTrackById: (trackId: number) => MP4Track;
 
         appendBuffer(data: MP4ArrayBuffer): number;
+        seek(time: number, useRap: boolean): void;
         start(): void;
         stop(): void;
         flush(): void;
