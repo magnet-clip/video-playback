@@ -33,17 +33,7 @@ type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 export class Kokoko6 {
     public currentFrame: number = 0;
     private direction: 1 | -1 = 1;
-    private lastFrame: number;
-    private decoder: VideoDecoder;
-    private samples: MP4Sample[];
-    private videoFrames = new TwoWayArr<VideoFrame>((v) => v.close());
-    private timescale = 0;
-    private ctsToNum: Record<number, number> = {};
-    private cache: VideoFrame[] = [];
-    private intervals: number[] = [];
-    private left: number;
-    private resolve: () => void;
-    private prefetching: boolean = false;
+    private videoFrames: VideoFrame[] = [];
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);
@@ -51,47 +41,31 @@ export class Kokoko6 {
             (content as any).fileStart = 0;
             file.onReady = (info) => {
                 const track = info.tracks[0];
-                this.lastFrame = track.nb_samples - 1;
-                this.timescale = track.timescale;
                 const config: VideoDecoderConfig = {
                     codec: track.codec,
                     codedHeight: track.video.height,
                     codedWidth: track.video.width,
                     description: description(file, track),
                 };
-                this.decoder = new VideoDecoder({
+                let i = 0;
+                const decoder = new VideoDecoder({
                     output: (v) => {
-                        if (this.direction === 1) {
-                            this.videoFrames.push(v);
-                        } else {
-                            this.cache.unshift(v);
-                        }
-                        if (--this.left === 0) {
-                            if (this.direction < 0) {
-                                for (const v of this.cache) {
-                                    this.videoFrames.push(v);
-                                }
-                                this.cache = [];
-                            }
-                            this.resolve();
-                        }
+                        this.videoFrames.push(v);
+                        console.log(v.timestamp / 40000);
+                        resolve();
                     },
                     error: console.error,
                 });
-                this.decoder.configure(config);
+                decoder.configure(config);
 
-                file.onSamples = (id, user, samples) => {
+                file.onSamples = (_id, _user, samples) => {
                     file.stop();
                     file.flush();
-                    this.samples = samples;
-                    for (const sample of samples) {
-                        this.ctsToNum[sample.cts] = sample.number;
+                    console.log("# samples: ", samples.length);
+                    for (const s of samples) {
+                        decoder.decode(sampleToChunk(s));
                     }
-                    console.log(this.ctsToNum);
-                    // console.log("onSamples", samples.map((s) => (s.is_sync ? "K" : "_")).join(""));
-                    console.log("CTS", samples.map((s) => s.cts).join(","));
-                    console.log("DTS", samples.map((s) => s.dts).join(","));
-                    this.prefetchFrames(true).then(resolve);
+                    decoder.flush;
                 };
                 file.setExtractionOptions(track.id, track);
                 file.start();
@@ -101,106 +75,22 @@ export class Kokoko6 {
         });
     }
 
-    private vfToTime = (v: VideoFrame): number => this.ctsToNum[(v.timestamp * this.timescale) / 1e6];
-
-    private clearIntervals() {
-        while (this.intervals.length > 0) clearInterval(this.intervals.pop());
+    private getNextFrame(): VideoFrame {
+        const v = this.videoFrames[this.currentFrame];
+        this.currentFrame += this.direction;
+        this.currentFrame += this.videoFrames.length;
+        this.currentFrame %= this.videoFrames.length;
+        return v;
     }
 
-    private async getNextFrame(): Promise<VideoFrame> {
-        return new Promise<VideoFrame>(async (resolve) => {
-            this.prefetchFrames();
-            this.intervals.push(
-                setInterval(() => {
-                    if (this.videoFrames.left() === 0) {
-                        console.warn("No frames to show");
-                        return;
-                    }
-                    const v = this.videoFrames.pop();
-                    this.currentFrame = v.timestamp / 40000; //this.vfToTime(v); // TODO: why ?
-                    console.log(`Frame #: ${this.currentFrame} @ ${v.timestamp}`);
-                    this.clearIntervals();
-                    this.log();
-                    resolve(v);
-                }, 10),
-            );
-        });
-    }
-
-    private log = () => {
-        console.log(`${this.videoFrames.left()} frames in buffer, pos ${this.videoFrames.position}`);
-        console.log(
-            this.videoFrames.data
-                .map((d, i) => (i === this.videoFrames.position ? `>${d.timestamp / 40000}<` : d.timestamp / 40000))
-                .join(","),
-        );
-    };
-
-    private async prefetchFrames(init: boolean = false) {
-        // console.log(`prefetchFrames(), ${this.videoFrames.left()} frames in buffer`);
-        return new Promise<void>((resolve, reject) => {
-            if (this.prefetching) {
-                resolve();
-                return;
-            }
-            this.prefetching = true;
-            const left = this.videoFrames.left();
-            if (left < THRESHOLD) {
-                console.log(`Too little frames: ${left}`);
-                let curr;
-                if (left > 0) {
-                    const lastFrame = this.videoFrames.last();
-                    curr = this.vfToTime(lastFrame) + 1; // TODO: why can't divide by 40k?
-                } else {
-                    console.warn("No frames left in buffer");
-                    curr = this.currentFrame + (init ? 0 : this.direction);
-                }
-                let samples: MP4Sample[] = [];
-                let finished = false;
-                while (!finished) {
-                    const s = this.samples[curr]; // Must be a keyframe as we fetch until a keyframe
-                    if (samples.length === 0 && !s.is_sync) {
-                        console.error("Must be a keyframe");
-                        this.prefetching = false;
-                        reject();
-                        return;
-                    }
-                    samples.push(s);
-                    curr = (curr + this.lastFrame + this.direction) % this.lastFrame; // TODO direction // TODO is it ok to jump over the end of video?
-                    finished = samples.length >= BUFFER && this.samples[curr].is_sync;
-                    if (samples.length > this.lastFrame) {
-                        console.error("No keyframe at all");
-                        this.prefetching = false;
-                        reject();
-                        return;
-                    }
-                }
-                this.left = samples.length;
-                this.resolve = () => {
-                    this.prefetching = false;
-                    this.log();
-                    resolve();
-                };
-                if (this.direction < 0) samples.reverse();
-                for (const s of samples) {
-                    this.decoder.decode(sampleToChunk(s));
-                }
-                this.decoder.flush();
-            } else {
-                this.prefetching = false;
-                resolve();
-            }
-        });
-    }
-
-    public async setDirection(dir: 1 | -1) {
+    public setDirection(dir: 1 | -1) {
         console.log(`Set direction ${dir}`);
-        this.direction = this.videoFrames.direction = dir;
+        this.direction = dir;
     }
 
-    public async *iterate(): AsyncGenerator<VideoFrame, VideoFrame, unknown> {
+    public *iterate(): Generator<VideoFrame, VideoFrame, unknown> {
         while (true) {
-            yield await this.getNextFrame();
+            yield this.getNextFrame();
         }
     }
 }

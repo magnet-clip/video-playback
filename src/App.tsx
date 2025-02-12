@@ -306,7 +306,7 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
     const videoManager = new Kokoko6();
-    let frameSource: AsyncGenerator<VideoFrame, VideoFrame, unknown>;
+    let frameSource: Generator<VideoFrame, VideoFrame, unknown>;
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
     const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
@@ -328,8 +328,8 @@ const Mp4Content = () => {
         }),
     );
 
-    const paint = async () => {
-        const { value: s } = await frameSource.next();
+    const paint = () => {
+        const { value: s } = frameSource.next();
         const c = canvas();
         c.width = s.codedWidth;
         c.height = s.codedHeight;
@@ -342,9 +342,9 @@ const Mp4Content = () => {
         } else {
             setPlaying(true);
             let lastTime = performance.now();
-            const interval = setInterval(async () => {
+            const interval = setInterval(() => {
                 if (playing()) {
-                    await paint();
+                    paint();
                     console.log(`${Math.round(performance.now() - lastTime)}ms`);
                     lastTime = performance.now();
                     setFrame(videoManager.currentFrame);
@@ -355,9 +355,9 @@ const Mp4Content = () => {
         }
     };
 
-    const step = async (dir: "fwd" | "bwd") => {
-        await videoManager.setDirection(dir === "fwd" ? 1 : -1);
-        await paint();
+    const step = (dir: "fwd" | "bwd") => {
+        videoManager.setDirection(dir === "fwd" ? 1 : -1);
+        paint();
         setFrame(videoManager.currentFrame);
     };
 
