@@ -1,4 +1,4 @@
-export const BUFFER = 30;
+export const BUFFER = 5;
 export type Dir = -1 | 1;
 
 export class TwoWayArr<T> {
@@ -11,8 +11,9 @@ export class TwoWayArr<T> {
     public set direction(value: Dir) {
         if (!value) return;
         if (this.dir !== value) {
+            console.log(`direction(${value}), ${this.pos} -> ${this.pos + value}`);
             this.dir = value;
-            // TODO
+            this.pos += value;
         }
     }
 
@@ -20,12 +21,20 @@ export class TwoWayArr<T> {
         return this.dir;
     }
 
+    public get position() {
+        return this.pos;
+    }
+
     public push(t: T) {
-        // console.log(`Before push: ${this.array.length} / ${this.pos}; dir: ${this.direction}`);
+        console.log(`Before push: ${this.pos} @ ${this.array.length}, adding ${t.timestamp / 40000}`);
+        if (this.array.length > 0) {
+            console.log(` Time @ pos: ${this.array[this.pos].timestamp / 40000}`);
+        }
         if (this.direction === 1) {
             this.array.push(t);
             // TODO keep until keyframe
             if (this.array.length > BUFFER) {
+                console.log(" -- trim --");
                 const v = this.array.shift();
                 this.destruct?.(v);
                 this.pos -= 1;
@@ -34,18 +43,23 @@ export class TwoWayArr<T> {
             this.array.unshift(t);
             // TODO keep until keyframe
             if (this.array.length > BUFFER) {
+                console.log(" -- trim --");
                 const v = this.array.pop();
                 this.destruct?.(v);
                 this.pos += 1;
             }
         }
-        // console.log(`After push: ${this.array.length} / ${this.pos}`);
+        console.log(`After push: ${this.pos} @ ${this.array.length}`);
+        if (this.array.length > 0) {
+            console.log(` Time @ pos: ${this.array[this.pos]?.timestamp / 40000}`);
+        }
     }
 
     public pop(): T {
         // console.log(`Pop: ${this.pos} -> ${this.pos + this.dir} / ${this.array.length}`);
+        const res = this.array[this.pos]; // TODO delete faraway items!
         this.pos += this.dir;
-        return this.array[this.pos]; // TODO delete faraway items!
+        return res;
     }
 
     public last(): T {
@@ -58,9 +72,13 @@ export class TwoWayArr<T> {
 
     public left() {
         if (this.direction === 1) {
-            return this.array.length - 1 - this.pos;
+            return this.array.length - this.pos;
         } else {
             return this.pos;
         }
+    }
+
+    public get data() {
+        return this.array;
     }
 }

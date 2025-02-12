@@ -40,7 +40,7 @@ export class Kokoko6 {
     private timescale = 0;
     private ctsToNum: Record<number, number> = {};
     private cache: VideoFrame[] = [];
-
+    private intervals: number[] = [];
     private left: number;
     private resolve: () => void;
     private prefetching: boolean = false;
@@ -91,7 +91,7 @@ export class Kokoko6 {
                     // console.log("onSamples", samples.map((s) => (s.is_sync ? "K" : "_")).join(""));
                     console.log("CTS", samples.map((s) => s.cts).join(","));
                     console.log("DTS", samples.map((s) => s.dts).join(","));
-                    this.prefetchFrames().then(resolve);
+                    this.prefetchFrames(true).then(resolve);
                 };
                 file.setExtractionOptions(track.id, track);
                 file.start();
@@ -103,10 +103,10 @@ export class Kokoko6 {
 
     private vfToTime = (v: VideoFrame): number => this.ctsToNum[(v.timestamp * this.timescale) / 1e6];
 
-    private intervals: number[] = [];
     private clearIntervals() {
         while (this.intervals.length > 0) clearInterval(this.intervals.pop());
     }
+
     private async getNextFrame(): Promise<VideoFrame> {
         return new Promise<VideoFrame>(async (resolve) => {
             this.prefetchFrames();
@@ -120,13 +120,23 @@ export class Kokoko6 {
                     this.currentFrame = v.timestamp / 40000; //this.vfToTime(v); // TODO: why ?
                     console.log(`Frame #: ${this.currentFrame} @ ${v.timestamp}`);
                     this.clearIntervals();
+                    this.log();
                     resolve(v);
                 }, 10),
             );
         });
     }
 
-    private async prefetchFrames() {
+    private log = () => {
+        console.log(`${this.videoFrames.left()} frames in buffer, pos ${this.videoFrames.position}`);
+        console.log(
+            this.videoFrames.data
+                .map((d, i) => (i === this.videoFrames.position ? `>${d.timestamp / 40000}<` : d.timestamp / 40000))
+                .join(","),
+        );
+    };
+
+    private async prefetchFrames(init: boolean = false) {
         // console.log(`prefetchFrames(), ${this.videoFrames.left()} frames in buffer`);
         return new Promise<void>((resolve, reject) => {
             if (this.prefetching) {
@@ -137,12 +147,13 @@ export class Kokoko6 {
             const left = this.videoFrames.left();
             if (left < THRESHOLD) {
                 console.log(`Too little frames: ${left}`);
-                let curr = this.currentFrame;
+                let curr;
                 if (left > 0) {
                     const lastFrame = this.videoFrames.last();
                     curr = this.vfToTime(lastFrame) + 1; // TODO: why can't divide by 40k?
                 } else {
                     console.warn("No frames left in buffer");
+                    curr = this.currentFrame + (init ? 0 : this.direction);
                 }
                 let samples: MP4Sample[] = [];
                 let finished = false;
@@ -167,9 +178,7 @@ export class Kokoko6 {
                 this.left = samples.length;
                 this.resolve = () => {
                     this.prefetching = false;
-                    console.log(`Prefetch done, ${this.videoFrames.left()} frames in buffer`);
-                    // this.videoFrames.sort((a, b) => b.timestamp - a.timestamp);
-                    // TODO: here I can remove unnecessary frames.
+                    this.log();
                     resolve();
                 };
                 if (this.direction < 0) samples.reverse();
@@ -187,12 +196,6 @@ export class Kokoko6 {
     public async setDirection(dir: 1 | -1) {
         console.log(`Set direction ${dir}`);
         this.direction = this.videoFrames.direction = dir;
-    }
-
-    public async addFrames(n: number) {
-        // TODO instead step in this.videoFrames by n
-        // this.currentFrame = (this.currentFrame + this.lastFrame + n) % this.lastFrame;
-        // await this.prefetchFrames();
     }
 
     public async *iterate(): AsyncGenerator<VideoFrame, VideoFrame, unknown> {
