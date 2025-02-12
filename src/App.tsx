@@ -376,7 +376,10 @@ class Kokoko6 {
                     for (const sample of samples) {
                         this.ctsToNum[sample.cts] = sample.number;
                     }
-                    console.log("onSamples", samples.map((s) => (s.is_sync ? "K" : "_")).join(""));
+                    console.log(this.ctsToNum);
+                    // console.log("onSamples", samples.map((s) => (s.is_sync ? "K" : "_")).join(""));
+                    console.log("CTS", samples.map((s) => s.cts).join(","));
+                    console.log("DTS", samples.map((s) => s.dts).join(","));
                     this.prefetchFrames().then(resolve);
                 };
                 file.setExtractionOptions(track.id, track);
@@ -389,19 +392,14 @@ class Kokoko6 {
 
     private vfToTime = (v: VideoFrame): number => this.ctsToNum[(v.timestamp * this.timescale) / 1e6];
 
-    public async setDirection(dir: "fwd" | "bwd") {
-        this.direction = dir === "fwd" ? 1 : -1;
-        this.videoFrames = [];
-    }
-
     private async getNextFrame(): Promise<VideoFrame> {
         return new Promise<VideoFrame>(async (resolve) => {
             this.prefetchFrames();
             const interval = setInterval(() => {
                 if (this.videoFrames.length === 0) return;
                 const v = this.videoFrames.shift();
-                this.currentFrame = this.vfToTime(v);
-                console.log("Frame #: ", this.currentFrame);
+                this.currentFrame = v.timestamp / 40000; //this.vfToTime(v); // TODO: why ?
+                console.log("Frame #: ", this.currentFrame, v.timestamp);
                 clearInterval(interval);
                 resolve(v);
             }, 10);
@@ -420,7 +418,7 @@ class Kokoko6 {
                 let curr = this.currentFrame;
                 if (this.videoFrames.length > 0) {
                     const lastFrame = this.videoFrames[this.videoFrames.length - 1];
-                    curr = this.vfToTime(lastFrame) + 1;
+                    curr = this.vfToTime(lastFrame) + 1; // TODO: why can't divide by 40k?
                 } else {
                     console.warn("No frames left in buffer");
                 }
@@ -436,7 +434,7 @@ class Kokoko6 {
                         return;
                     }
                     samples.push(s);
-                    curr = (curr + this.lastFrame + 1) % this.lastFrame; // TODO direction
+                    curr = (curr + this.lastFrame + 1) % this.lastFrame; // TODO direction // TODO is it ok to jump over the end of video?
                     finished = samples.length >= BUFFER && this.samples[curr].is_sync;
                     if (samples.length > this.lastFrame) {
                         console.error("No keyframe at all");
@@ -449,6 +447,10 @@ class Kokoko6 {
                 this.resolve = () => {
                     this.prefetching = false;
                     console.log(`Prefetch done, ${this.videoFrames.length} frames in buffer`);
+                    // this.videoFrames.sort((a, b) => b.timestamp - a.timestamp);
+
+                    // TODO: here I can remove unnecessary frames.
+
                     resolve();
                 };
                 for (const s of samples) {
@@ -460,6 +462,11 @@ class Kokoko6 {
                 resolve();
             }
         });
+    }
+
+    public async setDirection(dir: "fwd" | "bwd") {
+        this.direction = dir === "fwd" ? 1 : -1;
+        this.videoFrames = []; // what to do if current frame is not a keyframe?
     }
 
     public async addFrames(n: number) {
