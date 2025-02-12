@@ -8,7 +8,7 @@ import PlayArrowIcon from "@suid/icons-material/PlayArrow";
 import SkipNextIcon from "@suid/icons-material/SkipNext";
 import SkipPreviousIcon from "@suid/icons-material/SkipPrevious";
 import PauseIcon from "@suid/icons-material/Pause";
-import mp4box, { DataStream, MP4ArrayBuffer, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
+import mp4box, { MP4ArrayBuffer, MP4File } from "mp4box";
 import { Kokoko6 } from "./kokoko";
 
 export type VideoInfo = {
@@ -323,7 +323,7 @@ const Mp4Content = () => {
         on(dir, () => {
             const p = playing();
             setPlaying(false);
-            videoManager.setDirection(dir());
+            videoManager.setDirection(dir() === "fwd" ? 1 : -1);
             if (p) play();
         }),
     );
@@ -336,7 +336,7 @@ const Mp4Content = () => {
         c.getContext("2d").drawImage(s, 0, 0);
     };
 
-    const play = async () => {
+    const play = () => {
         if (playing()) {
             setPlaying(false);
         } else {
@@ -355,8 +355,8 @@ const Mp4Content = () => {
         }
     };
 
-    const step = async (n: number) => {
-        await videoManager.addFrames(n);
+    const step = async (dir: "fwd" | "bwd") => {
+        await videoManager.setDirection(dir === "fwd" ? 1 : -1);
         await paint();
         setFrame(videoManager.currentFrame);
     };
@@ -366,7 +366,7 @@ const Mp4Content = () => {
             <canvas ref={setCanvas} style={{ width: "100%" }} />
             <div style={{ display: "flex", "flex-direction": "row", width: "100%", "align-items": "center" }}>
                 <span title="Step 1 frame back">
-                    <IconButton onClick={() => step(-1)}>
+                    <IconButton onClick={() => step("bwd")}>
                         <SkipPreviousIcon />
                     </IconButton>
                 </span>
@@ -374,7 +374,7 @@ const Mp4Content = () => {
                     <IconButton onClick={play}>{playing() ? <PauseIcon /> : <PlayArrowIcon />}</IconButton>
                 </span>
                 <span title="Step 1 frame forth">
-                    <IconButton onClick={() => step(1)}>
+                    <IconButton onClick={() => step("fwd")}>
                         <SkipNextIcon />
                     </IconButton>
                 </span>

@@ -184,11 +184,9 @@ export class Kokoko6 {
         });
     }
 
-    public async setDirection(dir: "fwd" | "bwd") {
-        // this.direction = dir === "fwd" ? 1 : -1;
-        // this.videoFrames.direction = this.direction as Dir;
+    public async setDirection(dir: 1 | -1) {
         console.log(`Set direction ${dir}`);
-        this.direction = this.videoFrames.direction = dir === "fwd" ? 1 : -1;
+        this.direction = this.videoFrames.direction = dir;
     }
 
     public async addFrames(n: number) {
