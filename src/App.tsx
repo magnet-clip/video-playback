@@ -319,14 +319,13 @@ const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
     throw new Error("avcC or hvcC not found");
 };
 
-const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk => {
-    return new EncodedVideoChunk({
+const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
+    new EncodedVideoChunk({
         type: sample.is_sync ? "key" : "delta",
         timestamp: (1e6 * sample.cts) / sample.timescale,
         duration: (1e6 * sample.duration) / sample.timescale,
         data: sample.data,
     });
-};
 
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
@@ -355,7 +354,6 @@ class Kokoko6 {
                 const track = info.tracks[0];
                 this.lastFrame = track.nb_samples - 1;
                 this.timescale = track.timescale;
-                console.log("init", this.lastFrame);
                 const config: VideoDecoderConfig = {
                     codec: track.codec,
                     codedHeight: track.video.height,
@@ -365,7 +363,6 @@ class Kokoko6 {
                 this.decoder = new VideoDecoder({
                     output: (v) => {
                         this.videoFrames.push(v);
-                        // console.log("frames in cache are", this.videoFrames.map(this.vfToTime).join(","));
                         if (--this.left === 0) this.resolve();
                     },
                     error: console.error,
