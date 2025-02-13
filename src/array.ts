@@ -1,5 +1,6 @@
-export const BUFFER = 15;
-export const THRESHOLD = 5;
+const BUFFER = 15;
+const TOTAL = 2 * BUFFER + 1;
+const THRESHOLD = 5;
 
 export interface IStorage<T> {
     getRange(from: number, to: number): AsyncGenerator<T, undefined, void>;
@@ -57,55 +58,57 @@ export interface ICache<T> {
 
 export class LinearCache<T> implements ICache<T> {
     private direction: -1 | 1 = 1;
-    private frames: Record<number, T> = {};
+    private items: Record<number, T> = {};
 
     constructor(private storage: IStorage<T>) {}
 
-    private get count() {
-        return Object.keys(this.frames).length;
+    private get itemsInCache() {
+        return Object.keys(this.items).length;
     }
 
-    private position(v: number) {
-        return Object.keys(this.frames)
+    private itemPos(v: number) {
+        return Object.keys(this.items)
             .map((v) => +v)
             .indexOf(v);
     }
 
-    private get start() {
-        return +Object.keys(this.frames)[0];
+    private get firstIdx() {
+        return +Object.keys(this.items)[0];
     }
 
-    private get end() {
-        return +Object.keys(this.frames)[this.count - 1];
+    private get lastIdx() {
+        return +Object.keys(this.items)[this.itemsInCache - 1];
     }
 
     private async prefetch(idx: number) {
-        if (idx in this.frames) {
-            const poss = this.position(idx);
+        if (idx in this.items) {
+            const position = this.itemPos(idx);
 
             if (this.direction > 0) {
-                const delta = this.count - poss;
-                if (delta < THRESHOLD) {
-                    const newEnd = this.clamp(this.end + delta);
-                    let endPos = this.end + 1;
-                    if (newEnd > this.end) {
-                        for await (const t of this.storage.getRange(this.end + 1, newEnd)) {
-                            this.frames[endPos++] = t;
-                            if (this.count > 2 * BUFFER + 1) delete this.frames[this.start];
-                        }
-                    }
+                const delta = this.itemsInCache - position;
+                if (delta >= THRESHOLD) return;
+
+                const newLastIdx = this.clamp(this.lastIdx + BUFFER);
+                let p = this.lastIdx + 1;
+                if (newLastIdx <= this.lastIdx) return;
+
+                console.log(`Prefetch: fetch from ${this.lastIdx} to ${newLastIdx}`);
+                for await (const t of this.storage.getRange(this.lastIdx + 1, newLastIdx)) {
+                    this.items[p++] = t;
+                    if (this.itemsInCache > TOTAL) delete this.items[this.firstIdx];
                 }
             } else {
-                const delta = poss;
-                if (delta < THRESHOLD) {
-                    const newStart = this.clamp(this.start - delta);
-                    let startPos = newStart;
-                    if (newStart < this.start) {
-                        for await (const t of this.storage.getRange(newStart, this.start - 1)) {
-                            this.frames[startPos++] = t;
-                            if (this.count > 2 * BUFFER + 1) delete this.frames[this.end];
-                        }
-                    }
+                const delta = position;
+                if (delta >= THRESHOLD) return;
+
+                const newStart = this.clamp(this.firstIdx - BUFFER);
+                let p = newStart;
+                if (newStart >= this.firstIdx) return;
+
+                console.log(`Prefetch: fetch from ${newStart} to ${this.firstIdx - 1}`);
+                for await (const t of this.storage.getRange(newStart, this.firstIdx - 1)) {
+                    this.items[p++] = t;
+                    if (this.itemsInCache > TOTAL) delete this.items[this.lastIdx];
                 }
             }
         } else {
@@ -120,29 +123,29 @@ export class LinearCache<T> implements ICache<T> {
     private clamp = (idx: number) => Math.max(Math.min(idx, this.length - 1), 0);
 
     public async init(idx: number = 0): Promise<void> {
-        this.frames = [];
+        this.items = [];
         let start = this.clamp(idx - BUFFER);
         let end = this.clamp(idx + BUFFER);
         console.log(`Init: reading frames around ${idx}: from ${start} to ${end}`);
         let pos = start;
         for await (const t of this.storage.getRange(start, end)) {
-            this.frames[pos++] = t;
+            this.items[pos++] = t;
         }
     }
 
     public async get(idx: number, once: boolean): Promise<T> {
         if (!once) {
             await this.prefetch(idx);
-            console.log(`${idx} / ${this.count}`);
-            const res = this.frames[idx];
+            console.log(`${idx} / ${this.itemsInCache}`);
+            const res = this.items[idx];
             // if (res.timestamp / 40000 !== idx) {
             //     console.error("AAA ", idx);
             //     debugger;
             // }
             return res;
         } else {
-            if (idx in this.frames) {
-                return this.frames[idx];
+            if (idx in this.items) {
+                return this.items[idx];
             } else {
                 return await this.storage.get(idx);
             }
@@ -158,129 +161,6 @@ export class LinearCache<T> implements ICache<T> {
         return this.storage.length;
     }
 }
-
-// export class StorageCache<T> implements ICache<T> {
-//     private frames: Record<number, T> = {}; // indexed from -BUFFER to BUFFER
-//     private center = 0;
-//     private direction: -1 | 1 = 1;
-
-//     constructor(private storage: IStorage<T>) {}
-
-//     public async setDirection(d: -1 | 1) {
-//         await this.init();
-//         this.direction = d;
-//     }
-
-//     public async init() {
-//         console.log(`Init around ${this.center}`);
-//         let i = -BUFFER + this.center;
-//         this.frames = [];
-//         for await (const t of this.storage.getRange(-BUFFER + this.center, BUFFER + this.center)) {
-//             this.set(i++, t);
-//         }
-//     }
-
-//     private get count() {
-//         return Object.keys(this.frames).length;
-//     }
-
-//     private set(idx: number, value: T) {
-//         const key = (idx + this.storage.length) % this.storage.length;
-//         if (key in this.frames) {
-//             console.error(`Setting existing item @ ${key}`);
-//             debugger;
-//         }
-//         this.frames[key] = value;
-//     }
-
-//     private del(idx: number) {
-//         const key = (idx + this.storage.length) % this.storage.length;
-//         if (!(key in this.frames)) {
-//             console.error(`Deleting non-existing item @ ${key}`);
-//             debugger;
-//         }
-//         delete this.frames[key];
-//     }
-
-//     private async prefetch(idx: number) {
-//         if (this.count !== 2 * BUFFER + 1) {
-//             console.error(`Precheck: invalid buffer state: expected ${2 * BUFFER + 1} items, got ${this.count} items`);
-//             throw new Error("Invalid amount of records in cache");
-//         }
-
-//         if (this.direction > 0) {
-//             let delta = idx - this.center;
-//             delta = (delta + this.storage.length) % this.storage.length;
-
-//             if (-THRESHOLD < delta && delta < THRESHOLD) return;
-//             console.log(`Forward prefetch: center ${this.center}, idx ${idx}, distance ${delta}`);
-//             const oldStart = this.center - BUFFER;
-//             const newStart = this.center - BUFFER + delta + 1;
-//             const oldEnd = this.center + BUFFER;
-//             const newEnd = this.center + BUFFER + delta;
-
-//             let start = oldStart;
-//             let end = oldEnd + 1;
-//             for await (const t of this.storage.getRange(oldEnd + 1, newEnd)) {
-//                 this.set(end++, t);
-//                 this.del(start++);
-//             }
-//             this.center = (this.center + delta + this.storage.length) % this.storage.length;
-//         } else {
-//             let delta = this.center - idx;
-//             delta = (delta + this.storage.length) % this.storage.length;
-
-//             if (-THRESHOLD < delta && delta < THRESHOLD) return;
-//             console.log(`Backward prefetch: center ${this.center}, idx ${idx}, distance ${delta}`);
-//             const oldStart = this.center - BUFFER;
-//             const newStart = this.center - BUFFER - delta;
-//             const oldEnd = this.center + BUFFER;
-//             const newEnd = this.center + BUFFER - delta;
-
-//             let start = newStart;
-//             let end = newEnd + 1;
-//             for await (const t of this.storage.getRange(newStart, oldStart - 1)) {
-//                 this.set(start++, t);
-//                 this.del(end++);
-//             }
-//             this.center = (this.center - delta + this.storage.length) % this.storage.length;
-//         }
-
-//         if (this.count !== 2 * BUFFER + 1) {
-//             console.error(`Postcheck: Invalid buffer state: expected ${2 * BUFFER + 1} items, got ${this.count} items`);
-//             throw new Error("Invalid amount of records in cache");
-//         }
-//     }
-
-//     public async push(data: T): Promise<void> {
-//         this.storage.push(data);
-//     }
-
-//     public async get(idx: number, once: boolean): Promise<T> {
-//         if (!once) {
-//             await this.prefetch(idx);
-//             const res = this.frames[idx];
-//             // if (res.timestamp / 40000 !== idx) {
-//             //     console.error("AAA ", idx);
-//             //     debugger;
-//             // }
-//             return res;
-//         } else {
-//             // const pos = idx - this.center;
-//             // if (pos in this.frames) {
-//             //     return this.frames[pos];
-//             // } else {
-//             this.center = idx;
-//             await this.init();
-//             return this.frames[idx]; //await this.storage.get(idx);
-//             // }
-//         }
-//     }
-
-//     public get length(): number {
-//         return this.storage.length;
-//     }
-// }
 
 export class PlainCache<T> implements ICache<T> {
     private frames: T[] = [];
