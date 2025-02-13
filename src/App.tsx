@@ -9,7 +9,7 @@ import SkipNextIcon from "@suid/icons-material/SkipNext";
 import SkipPreviousIcon from "@suid/icons-material/SkipPrevious";
 import PauseIcon from "@suid/icons-material/Pause";
 import mp4box, { MP4ArrayBuffer, MP4File } from "mp4box";
-import { Kokoko6 } from "./kokoko";
+import { VideoSource } from "./video-source";
 
 export type VideoInfo = {
     frames: number;
@@ -305,8 +305,7 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    const videoManager = new Kokoko6();
-    let frameSource: Generator<VideoFrame, VideoFrame, unknown>;
+    const videoManager = new VideoSource();
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
     const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
@@ -316,20 +315,17 @@ const Mp4Content = () => {
         const [{ content }, videoInfo] = await videoRepo.getVideo(hash());
         info = videoInfo;
         await videoManager.init(content);
-        frameSource = videoManager.iterate();
     });
 
-    createEffect(
-        on(dir, () => {
-            const p = playing();
-            setPlaying(false);
-            videoManager.setDirection(dir() === "fwd" ? 1 : -1);
-            if (p) play();
-        }),
-    );
+    const getNextFrame = (dir: number) => {
+        let next = frame() + dir;
+        next += videoManager.length;
+        next %= videoManager.length;
+        return next;
+    };
 
-    const paint = () => {
-        const { value: s } = frameSource.next();
+    const paint = async (idx: number, once: boolean = false) => {
+        const s = await videoManager.getFrame(idx, once);
         const c = canvas();
         c.width = s.codedWidth;
         c.height = s.codedHeight;
@@ -342,12 +338,13 @@ const Mp4Content = () => {
         } else {
             setPlaying(true);
             let lastTime = performance.now();
-            const interval = setInterval(() => {
+            const interval = setInterval(async () => {
                 if (playing()) {
-                    paint();
+                    const next = getNextFrame(dir() === "fwd" ? 1 : -1);
+                    await paint(next);
                     console.log(`${Math.round(performance.now() - lastTime)}ms`);
                     lastTime = performance.now();
-                    setFrame(videoManager.currentFrame);
+                    setFrame(next);
                 } else {
                     clearInterval(interval);
                 }
@@ -355,10 +352,10 @@ const Mp4Content = () => {
         }
     };
 
-    const step = (dir: "fwd" | "bwd") => {
-        videoManager.setDirection(dir === "fwd" ? 1 : -1);
-        paint();
-        setFrame(videoManager.currentFrame);
+    const step = (dir: number) => {
+        const next = getNextFrame(dir);
+        paint(next);
+        setFrame(next);
     };
 
     return (
@@ -366,7 +363,7 @@ const Mp4Content = () => {
             <canvas ref={setCanvas} style={{ width: "100%" }} />
             <div style={{ display: "flex", "flex-direction": "row", width: "100%", "align-items": "center" }}>
                 <span title="Step 1 frame back">
-                    <IconButton onClick={() => step("bwd")}>
+                    <IconButton onClick={() => step(-1)}>
                         <SkipPreviousIcon />
                     </IconButton>
                 </span>
@@ -374,7 +371,7 @@ const Mp4Content = () => {
                     <IconButton onClick={play}>{playing() ? <PauseIcon /> : <PlayArrowIcon />}</IconButton>
                 </span>
                 <span title="Step 1 frame forth">
-                    <IconButton onClick={() => step("fwd")}>
+                    <IconButton onClick={() => step(1)}>
                         <SkipNextIcon />
                     </IconButton>
                 </span>

@@ -1,7 +1,5 @@
 import mp4box, { DataStream, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
-import { TwoWayArr, BUFFER } from "./array";
-
-const THRESHOLD = 2;
+import { IBuffer, PlainBuffer } from "./array";
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
     const trak = file.getTrackById(track.id) as any;
@@ -30,10 +28,8 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
-export class Kokoko6 {
-    public currentFrame: number = 0;
-    private direction: 1 | -1 = 1;
-    private videoFrames: VideoFrame[] = [];
+export class VideoSource {
+    private videoFrames: IBuffer<VideoFrame> = new PlainBuffer<VideoFrame>();
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);
@@ -47,12 +43,12 @@ export class Kokoko6 {
                     codedWidth: track.video.width,
                     description: description(file, track),
                 };
-                let i = 0;
                 const decoder = new VideoDecoder({
                     output: (v) => {
-                        this.videoFrames.push(v);
+                        // TODO: less frames than samples
+                        // TODO: v.copyTo (ArrayBuffer / Uint8ClampedArray)
+                        this.videoFrames.add(v);
                         console.log(v.timestamp / 40000);
-                        resolve();
                     },
                     error: console.error,
                 });
@@ -66,6 +62,7 @@ export class Kokoko6 {
                         decoder.decode(sampleToChunk(s));
                     }
                     decoder.flush;
+                    resolve();
                 };
                 file.setExtractionOptions(track.id, track);
                 file.start();
@@ -75,22 +72,11 @@ export class Kokoko6 {
         });
     }
 
-    private getNextFrame(): VideoFrame {
-        const v = this.videoFrames[this.currentFrame];
-        this.currentFrame += this.direction;
-        this.currentFrame += this.videoFrames.length;
-        this.currentFrame %= this.videoFrames.length;
-        return v;
+    public async getFrame(idx: number, once: boolean): Promise<VideoFrame> {
+        return await this.videoFrames.get(idx, once);
     }
 
-    public setDirection(dir: 1 | -1) {
-        console.log(`Set direction ${dir}`);
-        this.direction = dir;
-    }
-
-    public *iterate(): Generator<VideoFrame, VideoFrame, unknown> {
-        while (true) {
-            yield this.getNextFrame();
-        }
+    public get length() {
+        return this.videoFrames.length;
     }
 }
