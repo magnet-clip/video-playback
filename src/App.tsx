@@ -27,7 +27,7 @@ export type VideoData = {
 const [update, setUpdate] = createSignal(0);
 const [hash, setHash] = createSignal<string>();
 const [mode, setMode] = createSignal<"mp4box" | "video">("mp4box");
-const [dir, setDir] = createSignal<"fwd" | "bwd">("fwd");
+const [dir, setDir] = createSignal<"fwd" | "bwd">("bwd");
 
 export const readFile = async (file: File): Promise<ArrayBuffer> => {
     return new Promise<ArrayBuffer>((resolve) => {
@@ -317,6 +317,8 @@ const Mp4Content = () => {
         await videoManager.init(content);
     });
 
+    createEffect(on(dir, async () => await videoManager.setDirection(dir() === "fwd" ? 1 : -1)));
+
     const getNextFrame = (dir: number) => {
         let next = frame() + dir;
         next += videoManager.length;
@@ -352,9 +354,9 @@ const Mp4Content = () => {
         }
     };
 
-    const step = (dir: number) => {
+    const step = async (dir: number) => {
         const next = getNextFrame(dir);
-        paint(next);
+        await paint(next, true);
         setFrame(next);
     };
 

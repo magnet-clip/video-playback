@@ -1,5 +1,5 @@
 import mp4box, { DataStream, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
-import { CachedBuffer, IBuffer, PlainCache } from "./array";
+import { ICache, LinearCache, PlainStorage } from "./array";
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
     const trak = file.getTrackById(track.id) as any;
@@ -29,7 +29,8 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
 export class VideoSource {
-    private videoFrames: IBuffer<VideoFrame> = new CachedBuffer<VideoFrame>(new PlainCache<VideoFrame>());
+    private videoFrames: ICache<VideoFrame> = new LinearCache<VideoFrame>(new PlainStorage<VideoFrame>());
+    //new PlainCache<VideoFrame>();
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);
@@ -48,7 +49,6 @@ export class VideoSource {
                         // TODO: less frames than samples
                         // TODO: v.copyTo (ArrayBuffer / Uint8ClampedArray)
                         this.videoFrames.push(v);
-                        console.log(v.timestamp / 40000);
                     },
                     error: console.error,
                 });
@@ -58,11 +58,15 @@ export class VideoSource {
                     file.stop();
                     file.flush();
                     console.log("# samples: ", samples.length);
+                    console.log("# cts: ", new Set([...samples.map((s) => s.cts)]).size);
+                    console.log("# dts: ", new Set([...samples.map((s) => s.dts)]).size);
                     for (const s of samples) {
                         decoder.decode(sampleToChunk(s));
                     }
-                    decoder.flush;
-                    resolve();
+                    decoder
+                        .flush()
+                        .then(() => this.videoFrames.init())
+                        .then(() => resolve());
                 };
                 file.setExtractionOptions(track.id, track);
                 file.start();
@@ -78,5 +82,9 @@ export class VideoSource {
 
     public get length() {
         return this.videoFrames.length;
+    }
+
+    public async setDirection(dir: -1 | 1) {
+        await this.videoFrames.setDirection(dir);
     }
 }
