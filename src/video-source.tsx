@@ -1,5 +1,5 @@
 import mp4box, { DataStream, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
-import { IBuffer, PlainBuffer } from "./array";
+import { CachedBuffer, IBuffer, PlainCache } from "./array";
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
     const trak = file.getTrackById(track.id) as any;
@@ -29,7 +29,7 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
 export class VideoSource {
-    private videoFrames: IBuffer<VideoFrame> = new PlainBuffer<VideoFrame>();
+    private videoFrames: IBuffer<VideoFrame> = new CachedBuffer<VideoFrame>(new PlainCache<VideoFrame>());
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);
@@ -47,7 +47,7 @@ export class VideoSource {
                     output: (v) => {
                         // TODO: less frames than samples
                         // TODO: v.copyTo (ArrayBuffer / Uint8ClampedArray)
-                        this.videoFrames.add(v);
+                        this.videoFrames.push(v);
                         console.log(v.timestamp / 40000);
                     },
                     error: console.error,
