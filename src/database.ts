@@ -1,6 +1,6 @@
 import { openDB } from "idb";
 import { VideoData, VideoInfo } from "./App";
-import { IndexedDBStorage } from "./array";
+import { IndexedDBStorage } from "./storage";
 
 const LAST_DB_VERSION = 2;
 const VIDEO_INFO_TABLE = "video-info"; // hash -> arraybuffer

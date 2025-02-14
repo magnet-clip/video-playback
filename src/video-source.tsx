@@ -1,6 +1,7 @@
 import mp4box, { DataStream, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
-import { ICache, IndexedDBStorage, LinearCache, PlainCache, PlainStorage } from "./array";
+import { IndexedDBStorage, PlainStorage } from "./storage";
 import { db } from "./database";
+import { ICache, LinearCache, PlainCache } from "./cache";
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
     const trak = file.getTrackById(track.id) as any;
@@ -57,6 +58,7 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
                 };
 
                 this.size = track.nb_samples;
+                this.videoFrames.prepare(this.size);
                 const decoder = new VideoDecoder({
                     output: (v) => this.handleVideoFrame(v),
                     error: console.error,
@@ -73,7 +75,7 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
                     // TODO: web worker ?
                     await decoder.flush();
                     await this.convertFrames();
-                    await this.videoFrames.init();
+                    await this.videoFrames.finalize();
                     this.cleanup();
                     resolve();
                 };

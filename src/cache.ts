@@ -1,111 +1,15 @@
-import { IDBPDatabase } from "idb";
+import { IStorage } from "./storage";
 
 const BUFFER = 15;
 const TOTAL = 2 * BUFFER + 1;
 const THRESHOLD = 5;
 
-export interface IStorage<T> {
-    getRange(from: number, to: number): AsyncGenerator<T, undefined, void>;
-    push(idx: number, data: T): Promise<void>;
-    get(idx: number): Promise<T>;
-    get length(): number;
-}
-
-// implementations
-// - plain array
-// - idb
-// - list of blobs
-// - filesystem api (?)
-
-export class PlainStorage<T> implements IStorage<T> {
-    private items: T[] = [];
-
-    public async *getRange(from: number, to: number): AsyncGenerator<T, undefined, void> {
-        from = (from + this.items.length) % this.items.length;
-        to = (to + this.items.length) % this.items.length;
-        if (from <= to) {
-            for (let i = from; i <= to; i++) {
-                yield this.items[i];
-            }
-        } else {
-            for (let i = from; i < this.items.length; i++) {
-                yield this.items[i];
-            }
-            for (let i = 0; i <= to; i++) {
-                yield this.items[i];
-            }
-        }
-    }
-
-    public async push(idx: number, data: T): Promise<void> {
-        this.items[idx] = data;
-    }
-
-    public async get(idx: number): Promise<T> {
-        return this.items[(idx + this.items.length) % this.items.length];
-    }
-
-    public get length() {
-        return this.items.length;
-    }
-}
-
-export interface IRepo<T> {}
-
-export class IndexedDBStorage<T> implements IStorage<T> {
-    private count = 0;
-
-    public static addTableMigration(db: IDBPDatabase, name: string) {
-        const videoInfo = db.createObjectStore(name, {
-            keyPath: "idx",
-        });
-        videoInfo.createIndex("idx", "idx");
-    }
-
-    constructor(private db: IDBPDatabase, private table: string) {
-        db.clear(table);
-    }
-
-    public async push(idx: number, data: T): Promise<void> {
-        this.count += 1;
-        await this.db.add(this.table, { idx, content: data });
-    }
-
-    public async get(idx: number): Promise<T> {
-        const res = await this.db.get(this.table, (idx + this.count) % this.count);
-        return res?.content as T;
-    }
-
-    public async *getRange(from: number, to: number): AsyncGenerator<T, undefined, void> {
-        const count = this.count;
-        from = (from + count) % count;
-        to = (to + count) % count;
-        const t = this.db.transaction(this.table, "readonly");
-        if (from <= to) {
-            for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(from, to))) {
-                yield item.value.content;
-            }
-        } else {
-            for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(from, count - 1))) {
-                // for (const item of await this.db.getAllFromIndex(this.table, "idx", IDBKeyRange.bound(from, count - 1))) {
-                yield item.value.content;
-            }
-            for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(0, to))) {
-                // for (const item of await this.db.getAllFromIndex(this.table, "idx", IDBKeyRange.bound(0, to))) {
-                yield item.value.content;
-            }
-        }
-    }
-
-    get length(): number {
-        return this.count;
-    }
-}
-
 export interface ICache<T> {
-    setDirection(d: -1 | 1): Promise<void>;
-    init(): Promise<void>;
+    prepare(count: number): void;
     push(idx: number, data: T): Promise<void>;
+    finalize(): Promise<void>;
+
+    setDirection(d: -1 | 1): Promise<void>;
     get(idx: number, once: boolean): Promise<T>;
     get length(): number;
 }
@@ -115,6 +19,10 @@ export class LinearCache<T> implements ICache<T> {
     private items: Record<number, T> = {};
 
     constructor(private storage: IStorage<T>) {}
+
+    public prepare(count: number) {
+        this.storage.init(count);
+    }
 
     private get itemsInCache() {
         return Object.keys(this.items).length;
@@ -166,7 +74,7 @@ export class LinearCache<T> implements ICache<T> {
                 }
             }
         } else {
-            await this.init(idx);
+            await this.finalize(idx);
         }
     }
 
@@ -176,7 +84,7 @@ export class LinearCache<T> implements ICache<T> {
 
     private clamp = (idx: number) => Math.max(Math.min(idx, this.length - 1), 0);
 
-    public async init(idx: number = 0): Promise<void> {
+    public async finalize(idx: number = 0): Promise<void> {
         this.items = [];
         let start = this.clamp(idx - BUFFER);
         let end = this.clamp(idx + BUFFER);
@@ -219,11 +127,13 @@ export class LinearCache<T> implements ICache<T> {
 export class PlainCache<T> implements ICache<T> {
     private frames: T[] = [];
 
+    public prepare() {}
+
     public async push(idx: number, data: T): Promise<void> {
         this.frames[idx] = data;
     }
 
-    public async init() {}
+    public async finalize() {}
 
     public async setDirection(d: -1 | 1) {}
 
