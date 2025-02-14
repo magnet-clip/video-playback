@@ -1,5 +1,5 @@
 import mp4box, { DataStream, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
-import { ICache, IndexedDBStorage, LinearCache, PlainStorage } from "./array";
+import { ICache, IndexedDBStorage, LinearCache, PlainCache, PlainStorage } from "./array";
 import { db } from "./database";
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
@@ -29,12 +29,19 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
-export class VideoSource {
-    private videoFrames: ICache<Blob> = new LinearCache<Blob>(new PlainStorage<Blob>());
-    // private videoFrames: ICache<Uint8ClampedArray> = new LinearCache<Uint8ClampedArray>(
-    //     new IndexedDBStorage<Uint8ClampedArray>(db, "frames"),
-    // );
-    // private videoFrames: ICache<VideoFrame> = new PlainCache<VideoFrame>();
+export interface IVideoSource<T> {
+    init(content: ArrayBuffer): Promise<void>;
+
+    get length(): number;
+    getFrame(idx: number, once: boolean): Promise<T>;
+    setDirection(dir: -1 | 1): Promise<void>;
+
+    paint(item: T, canvas: HTMLCanvasElement): Promise<void>;
+}
+
+abstract class GenericVideoSource<T> implements IVideoSource<T> {
+    protected videoFrames: ICache<T>;
+    protected size: number;
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);
@@ -48,59 +55,10 @@ export class VideoSource {
                     codedWidth: track.video.width,
                     description: description(file, track),
                 };
-                let i = 0;
-                // TODO save all frames to array and then map to promises and promise.all!
 
-                // TODO very low mem consumption and high speed
-
-                // TODO drawback: requestAnimationFrame
-                const samples: [number, VideoFrame][] = [];
-                const convertFrames = () => {
-                    console.log(`Got ${samples.length} vs ${track.nb_samples} expected`);
-                    return Promise.all(
-                        samples.map(async ([i, v]) => {
-                            const options: VideoFrameCopyToOptions = {
-                                format: "RGBA",
-                            };
-                            const size = v.allocationSize(options);
-                            const buffer = new Uint8ClampedArray(size);
-                            await v.copyTo(buffer, options);
-                            this.videoFrames.push(i, new Blob([buffer]));
-                            v.close();
-                            console.log(`Frame ${i} converted`);
-                        }),
-                    );
-                };
-
+                this.size = track.nb_samples;
                 const decoder = new VideoDecoder({
-                    output: (v) => {
-                        console.log(`Frame ${i} decoded`);
-                        samples.push([i++, v]);
-                        // Raw frames
-                        // this.videoFrames.push(v);
-
-                        // Uint8array
-                        // const options: VideoFrameCopyToOptions = {
-                        //     format: "RGBA",
-                        // };
-                        // const size = v.allocationSize(options);
-                        // const buffer = new Uint8ClampedArray(size);
-                        // v.copyTo(buffer, options).then(() => {
-                        //     this.videoFrames.push(buffer);
-                        //     v.close();
-                        // });
-
-                        // Blob
-                        // const options: VideoFrameCopyToOptions = {
-                        //     format: "RGBA",
-                        // };
-                        // const size = v.allocationSize(options);
-                        // const buffer = new Uint8ClampedArray(size);
-                        // v.copyTo(buffer, options).then(() => {
-                        //     this.videoFrames.push(i++, new Blob([buffer]));
-                        //     v.close();
-                        // });
-                    },
+                    output: (v) => this.handleVideoFrame(v),
                     error: console.error,
                 });
                 decoder.configure(config);
@@ -114,8 +72,9 @@ export class VideoSource {
                     // TODO: perhaps decoding and conversion could be done in parallel
                     // TODO: web worker ?
                     await decoder.flush();
-                    await convertFrames();
+                    await this.convertFrames();
                     await this.videoFrames.init();
+                    this.cleanup();
                     resolve();
                 };
                 file.setExtractionOptions(track.id, track);
@@ -125,8 +84,13 @@ export class VideoSource {
             file.flush();
         });
     }
+    protected abstract cleanup(): void;
+    protected abstract convertFrames(): Promise<void>;
+    protected abstract handleVideoFrame(v: VideoFrame): void;
 
-    public async getFrame(idx: number, once: boolean): Promise<Blob> {
+    public abstract paint(item: T, canvas: HTMLCanvasElement): Promise<void>;
+
+    public async getFrame(idx: number, once: boolean): Promise<T> {
         return await this.videoFrames.get(idx, once);
     }
 
@@ -136,5 +100,116 @@ export class VideoSource {
 
     public async setDirection(dir: -1 | 1) {
         await this.videoFrames.setDirection(dir);
+    }
+}
+
+export class BlobVideoSource extends GenericVideoSource<Blob> {
+    private frames: VideoFrame[] = [];
+
+    constructor() {
+        super();
+        this.videoFrames = new LinearCache<Blob>(new PlainStorage<Blob>());
+    }
+
+    protected handleVideoFrame(v: VideoFrame): void {
+        console.log(`Frame ${this.frames.length} / ${this.size} decoded`);
+        this.frames.push(v);
+    }
+
+    protected async convertFrames(): Promise<any> {
+        return Promise.all(
+            this.frames.map(async (v, i) => {
+                const options: VideoFrameCopyToOptions = {
+                    format: "RGBA",
+                };
+                const size = v.allocationSize(options);
+                const buffer = new Uint8ClampedArray(size);
+                await v.copyTo(buffer, options);
+                this.videoFrames.push(i, new Blob([buffer]));
+                v.close();
+                console.log(`Frame ${i} / ${this.size} converted`);
+            }),
+        );
+    }
+
+    protected cleanup(): void {
+        this.frames = [];
+    }
+
+    public async paint(item: Blob, canvas: HTMLCanvasElement): Promise<void> {
+        const start = performance.now();
+        return new Promise(async (resolve) => {
+            const data = await item.arrayBuffer();
+            requestAnimationFrame(() => {
+                const arr = new Uint8ClampedArray(data);
+                const imdata = new ImageData(arr, canvas.width, canvas.height, { colorSpace: "srgb" });
+                canvas.getContext("2d").putImageData(imdata, 0, 0);
+                console.log(`paint: ${performance.now() - start}ms`);
+                // resolve(); // Resolve here causes timeouts
+            });
+            resolve();
+        });
+    }
+}
+
+export class PlainVideoSource extends GenericVideoSource<VideoFrame> {
+    private i = 0;
+
+    constructor() {
+        super();
+        this.videoFrames = new PlainCache<VideoFrame>();
+    }
+
+    protected handleVideoFrame(v: VideoFrame): void {
+        console.log(`Frame ${this.i} / ${this.size} decoded`);
+        this.videoFrames.push(this.i++, v);
+    }
+
+    protected async convertFrames(): Promise<any> {}
+
+    protected cleanup(): void {}
+
+    public async paint(item: VideoFrame, canvas: HTMLCanvasElement): Promise<void> {
+        canvas.getContext("2d").drawImage(item, 0, 0);
+    }
+}
+
+export class IndexedDBVideoSource extends GenericVideoSource<Uint8ClampedArray> {
+    private frames: VideoFrame[] = [];
+
+    constructor() {
+        super();
+        this.videoFrames = new LinearCache<Uint8ClampedArray>(new IndexedDBStorage<Uint8ClampedArray>(db, "frames"));
+    }
+
+    protected handleVideoFrame(v: VideoFrame): void {
+        console.log(`Frame ${this.frames.length} / ${this.size} decoded`);
+        this.frames.push(v);
+    }
+
+    protected async convertFrames(): Promise<any> {
+        return Promise.all(
+            this.frames.map(async (v, i) => {
+                const options: VideoFrameCopyToOptions = {
+                    format: "RGBA",
+                };
+                const size = v.allocationSize(options);
+                const buffer = new Uint8ClampedArray(size);
+                await v.copyTo(buffer, options);
+                this.videoFrames.push(i, buffer);
+                v.close();
+                console.log(`Frame ${i} / ${this.size} converted`);
+            }),
+        );
+    }
+
+    protected cleanup(): void {
+        this.frames = [];
+    }
+
+    public async paint(item: Uint8ClampedArray<ArrayBufferLike>, canvas: HTMLCanvasElement): Promise<void> {
+        canvas
+            .getContext("2d")
+            .putImageData(new ImageData(item, canvas.width, canvas.height, { colorSpace: "srgb" }), 0, 0);
     }
 }

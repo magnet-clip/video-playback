@@ -9,7 +9,7 @@ import SkipNextIcon from "@suid/icons-material/SkipNext";
 import SkipPreviousIcon from "@suid/icons-material/SkipPrevious";
 import PauseIcon from "@suid/icons-material/Pause";
 import mp4box, { MP4ArrayBuffer, MP4File } from "mp4box";
-import { VideoSource } from "./video-source";
+import { BlobVideoSource, IndexedDBVideoSource, PlainVideoSource } from "./video-source";
 
 export type VideoInfo = {
     frames: number;
@@ -305,7 +305,9 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    const videoManager = new VideoSource();
+    // const videoManager = new IndexedDBVideoSource(); // worst, long init()
+    // const videoManager = new BlobVideoSource(); // fine
+    const videoManager = new PlainVideoSource(); // best, but memory consumig, good for short videos <= 30-50 frames
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
     const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
@@ -331,37 +333,7 @@ const Mp4Content = () => {
 
     const paint = async (idx: number, once: boolean = false) => {
         const s = await videoManager.getFrame(idx, once);
-        const data = await s.arrayBuffer();
-        requestAnimationFrame(async () => {
-            const start = performance.now();
-            // console.log("paint", idx);
-            // const s = await videoManager.getFrame(idx, once);
-            const c = canvas();
-            // // In case of VideoFrame
-            // c.width = s.codedWidth;
-            // c.height = s.codedHeight;
-            // c.getContext("2d").drawImage(s, 0, 0);
-
-            // // In case of ImageData / Uint8ClampedArray
-            // c.width = 1920; //info.resolution[0];
-            // c.height = 1080; //info.resolution[1];
-            // c.getContext("2d").putImageData(
-            //     new ImageData(s, 1920, 1080, { colorSpace: "srgb" }), //info.resolution[0], info.resolution[1]),
-            //     0,
-            //     0,
-            // );
-
-            c.width = 1920; //info.resolution[0];
-            c.height = 1080; //info.resolution[1];
-            // const data = await s.arrayBuffer();
-            const arr = new Uint8ClampedArray(data);
-            c.getContext("2d").putImageData(
-                new ImageData(arr, 1920, 1080, { colorSpace: "srgb" }), //info.resolution[0], info.resolution[1]),
-                0,
-                0,
-            );
-            // console.log(`paint took ${performance.now() - start}ms`);
-        });
+        await videoManager.paint(s, canvas());
     };
 
     const play = () => {
@@ -392,7 +364,7 @@ const Mp4Content = () => {
 
     return (
         <Show when={hash()}>
-            <canvas ref={setCanvas} style={{ width: "100%" }} />
+            <canvas ref={setCanvas} style={{ width: "100%" }} width={1920} height={1080} />
             <div style={{ display: "flex", "flex-direction": "row", width: "100%", "align-items": "center" }}>
                 <span title="Step 1 frame back">
                     <IconButton onClick={() => step(-1)} disabled={!ready()}>
