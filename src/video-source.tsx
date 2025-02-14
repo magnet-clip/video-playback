@@ -43,7 +43,6 @@ export interface IVideoSource<T> {
 abstract class GenericVideoSource<T> implements IVideoSource<T> {
     protected cache: ICache<T>;
     protected size: number;
-    private playing = false;
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);

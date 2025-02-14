@@ -305,13 +305,14 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    const videoManager = new IndexedDBVideoSource(); // worst, long init()
-    // const videoManager = new BlobVideoSource(); // fine
+    // const videoManager = new IndexedDBVideoSource(); // lots of memory at init, long init, minor freezes during fetch
+    const videoManager = new BlobVideoSource(); // lots of memort at init, but longer frame times
     // const videoManager = new PlainVideoSource(); // best, but memory consumig, good for short videos <= 30-50 frames
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
     const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
     const [frame, setFrame] = createSignal(0);
+    const [progress, setProgress] = createSignal(false);
     const [ready, setReady] = createSignal(false);
 
     createEffect(async () => {
@@ -337,23 +338,30 @@ const Mp4Content = () => {
         await videoManager.paint(s, canvas());
     };
 
+    let lastTime: number;
+    let interval: number;
+    const playFrame = async () => {
+        if (progress()) return;
+        setProgress(true);
+        if (playing()) {
+            const next = getNextFrame(dir() === "fwd" ? 1 : -1);
+            await paint(next);
+            console.log(`${next}: ${Math.round(performance.now() - lastTime)}ms`);
+            lastTime = performance.now();
+            setFrame(next);
+        } else {
+            clearInterval(interval);
+        }
+        setProgress(false);
+    };
+
     const play = () => {
         if (playing()) {
             setPlaying(false);
         } else {
             setPlaying(true);
-            let lastTime = performance.now();
-            const interval = setInterval(async () => {
-                if (playing()) {
-                    const next = getNextFrame(dir() === "fwd" ? 1 : -1);
-                    await paint(next);
-                    console.log(`${next}: ${Math.round(performance.now() - lastTime)}ms`);
-                    lastTime = performance.now();
-                    setFrame(next);
-                } else {
-                    clearInterval(interval);
-                }
-            }, Math.round(1000 / info.fps));
+            lastTime = performance.now();
+            interval = setInterval(playFrame, Math.round(1000 / info.fps));
         }
     };
 
