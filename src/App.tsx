@@ -332,6 +332,7 @@ const Mp4Content = () => {
     };
 
     const paint = async (idx: number, once: boolean = false) => {
+        console.log(`Paint frame ${idx}`);
         const s = await videoManager.getFrame(idx, once);
         await videoManager.paint(s, canvas());
     };
@@ -346,7 +347,7 @@ const Mp4Content = () => {
                 if (playing()) {
                     const next = getNextFrame(dir() === "fwd" ? 1 : -1);
                     await paint(next);
-                    console.log(`${Math.round(performance.now() - lastTime)}ms`);
+                    console.log(`${next}: ${Math.round(performance.now() - lastTime)}ms`);
                     lastTime = performance.now();
                     setFrame(next);
                 } else {

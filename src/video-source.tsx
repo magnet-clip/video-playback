@@ -37,12 +37,13 @@ export interface IVideoSource<T> {
     getFrame(idx: number, once: boolean): Promise<T>;
     setDirection(dir: -1 | 1): Promise<void>;
 
-    paint(item: T, canvas: HTMLCanvasElement): Promise<void>;
+    paint(item: T, canvas: HTMLCanvasElement): Promise<boolean>;
 }
 
 abstract class GenericVideoSource<T> implements IVideoSource<T> {
     protected cache: ICache<T>;
     protected size: number;
+    private playing = false;
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);
@@ -89,8 +90,18 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
     protected abstract cleanup(): void;
     protected abstract convertFrames(): Promise<void>;
     protected abstract handleVideoFrame(v: VideoFrame): void;
+    protected abstract paintImpl(item: T, canvas: HTMLCanvasElement): Promise<void>;
 
-    public abstract paint(item: T, canvas: HTMLCanvasElement): Promise<void>;
+    public async paint(item: T, canvas: HTMLCanvasElement): Promise<boolean> {
+        // if (this.playing) {
+        //     console.warn("skip!");
+        //     return false;
+        // }
+        // this.playing = true;
+        await this.paintImpl(item, canvas);
+        // this.playing = false;
+        return true;
+    }
 
     public async getFrame(idx: number, once: boolean): Promise<T> {
         return await this.cache.get(idx, once);
@@ -138,7 +149,7 @@ export class BlobVideoSource extends GenericVideoSource<Blob> {
         this.frames = [];
     }
 
-    public async paint(item: Blob, canvas: HTMLCanvasElement): Promise<void> {
+    protected async paintImpl(item: Blob, canvas: HTMLCanvasElement): Promise<void> {
         const start = performance.now();
         return new Promise(async (resolve) => {
             const data = await item.arrayBuffer();
@@ -147,9 +158,9 @@ export class BlobVideoSource extends GenericVideoSource<Blob> {
                 const imdata = new ImageData(arr, canvas.width, canvas.height, { colorSpace: "srgb" });
                 canvas.getContext("2d").putImageData(imdata, 0, 0);
                 console.log(`paint: ${performance.now() - start}ms`);
-                // resolve(); // Resolve here causes timeouts
+                resolve(); // Resolve here causes timeouts
             });
-            resolve();
+            // resolve();
         });
     }
 }
@@ -171,7 +182,7 @@ export class PlainVideoSource extends GenericVideoSource<VideoFrame> {
 
     protected cleanup(): void {}
 
-    public async paint(item: VideoFrame, canvas: HTMLCanvasElement): Promise<void> {
+    protected async paintImpl(item: VideoFrame, canvas: HTMLCanvasElement): Promise<void> {
         canvas.getContext("2d").drawImage(item, 0, 0);
     }
 }
@@ -209,7 +220,7 @@ export class IndexedDBVideoSource extends GenericVideoSource<Uint8ClampedArray> 
         this.frames = [];
     }
 
-    public async paint(item: Uint8ClampedArray<ArrayBufferLike>, canvas: HTMLCanvasElement): Promise<void> {
+    protected async paintImpl(item: Uint8ClampedArray<ArrayBufferLike>, canvas: HTMLCanvasElement): Promise<void> {
         canvas
             .getContext("2d")
             .putImageData(new ImageData(item, canvas.width, canvas.height, { colorSpace: "srgb" }), 0, 0);

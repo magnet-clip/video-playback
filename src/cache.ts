@@ -89,10 +89,16 @@ export class LinearCache<T> implements ICache<T> {
         let start = this.clamp(idx - BUFFER);
         let end = this.clamp(idx + BUFFER);
         console.log(`Init: reading frames around ${idx}: from ${start} to ${end}`);
-        let pos = start;
-        // TODO direction?
-        for await (const t of this.storage.getRange(start, end, 1)) {
-            this.items[pos++] = t;
+        if (this.direction > 0) {
+            let pos = start;
+            for await (const t of this.storage.getRange(start, end, this.direction)) {
+                this.items[pos++] = t;
+            }
+        } else {
+            let pos = end;
+            for await (const t of this.storage.getRange(start, end, this.direction)) {
+                this.items[pos--] = t;
+            }
         }
     }
 
