@@ -2,7 +2,7 @@ import { IDBPDatabase } from "idb";
 
 export interface IStorage<T> {
     init(count: number): void;
-    getRange(from: number, to: number): AsyncGenerator<T, undefined, void>;
+    getRange(from: number, to: number, direction: -1 | 1): AsyncGenerator<T, undefined, void>;
     push(idx: number, data: T): Promise<void>;
     get(idx: number): Promise<T>;
     get length(): number;
@@ -13,18 +13,18 @@ export interface IStorage<T> {
 abstract class GenericStorage<T> implements IStorage<T> {
     public abstract init(count: number): void;
 
-    public getRange(from: number, to: number): AsyncGenerator<T, undefined, void> {
+    public getRange(from: number, to: number, direction: -1 | 1): AsyncGenerator<T, undefined, void> {
         from = (from + this.length) % this.length;
         to = (to + this.length) % this.length;
         if (from <= to) {
-            return this.getRangeImpl(from, to);
+            return this.getRangeImpl(from, to, direction);
         } else {
             console.error(`Can't fetch frames in reverse order: ${from} -> ${to}`);
             throw new Error("Invalid frame order");
         }
     }
 
-    protected abstract getRangeImpl(from: number, to: number): AsyncGenerator<T, undefined, void>;
+    protected abstract getRangeImpl(from: number, to: number, direction: -1 | 1): AsyncGenerator<T, undefined, void>;
 
     public abstract push(idx: number, data: T): Promise<void>;
     public abstract get(idx: number): Promise<T>;
@@ -36,7 +36,7 @@ export class PlainStorage<T> extends GenericStorage<T> {
 
     public init() {}
 
-    public async *getRangeImpl(from: number, to: number): AsyncGenerator<T, undefined, void> {
+    public async *getRangeImpl(from: number, to: number, direction: -1 | 1): AsyncGenerator<T, undefined, void> {
         from = (from + this.items.length) % this.items.length;
         to = (to + this.items.length) % this.items.length;
         for (let i = from; i <= to; i++) {
@@ -86,7 +86,7 @@ export class IndexedDBStorage<T> extends GenericStorage<T> {
         return res?.content as T;
     }
 
-    public async *getRangeImpl(from: number, to: number): AsyncGenerator<T, undefined, void> {
+    public async *getRangeImpl(from: number, to: number, direction: -1 | 1): AsyncGenerator<T, undefined, void> {
         const t = this.db.transaction(this.table, "readonly");
         for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(from, to))) {
             yield item.value.content;

@@ -55,7 +55,7 @@ export class LinearCache<T> implements ICache<T> {
                 if (newLastIdx <= this.lastIdx) return;
 
                 console.log(`Prefetch: fetch from ${this.lastIdx} to ${newLastIdx}`);
-                for await (const t of this.storage.getRange(this.lastIdx + 1, newLastIdx)) {
+                for await (const t of this.storage.getRange(this.lastIdx + 1, newLastIdx, this.direction)) {
                     this.items[p++] = t;
                     if (this.itemsInCache > TOTAL) delete this.items[this.firstIdx];
                 }
@@ -68,7 +68,7 @@ export class LinearCache<T> implements ICache<T> {
                 if (newStart >= this.firstIdx) return;
 
                 console.log(`Prefetch: fetch from ${newStart} to ${this.firstIdx - 1}`);
-                for await (const t of this.storage.getRange(newStart, this.firstIdx - 1)) {
+                for await (const t of this.storage.getRange(newStart, this.firstIdx - 1, this.direction)) {
                     this.items[p++] = t;
                     if (this.itemsInCache > TOTAL) delete this.items[this.lastIdx];
                 }
@@ -90,7 +90,8 @@ export class LinearCache<T> implements ICache<T> {
         let end = this.clamp(idx + BUFFER);
         console.log(`Init: reading frames around ${idx}: from ${start} to ${end}`);
         let pos = start;
-        for await (const t of this.storage.getRange(start, end)) {
+        // TODO direction?
+        for await (const t of this.storage.getRange(start, end, 1)) {
             this.items[pos++] = t;
         }
     }
