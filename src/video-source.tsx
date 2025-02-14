@@ -41,7 +41,7 @@ export interface IVideoSource<T> {
 }
 
 abstract class GenericVideoSource<T> implements IVideoSource<T> {
-    protected videoFrames: ICache<T>;
+    protected cache: ICache<T>;
     protected size: number;
 
     public async init(content: ArrayBuffer): Promise<void> {
@@ -58,7 +58,7 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
                 };
 
                 this.size = track.nb_samples;
-                this.videoFrames.prepare(this.size);
+                this.cache.prepare(this.size);
                 const decoder = new VideoDecoder({
                     output: (v) => this.handleVideoFrame(v),
                     error: console.error,
@@ -75,7 +75,7 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
                     // TODO: web worker ?
                     await decoder.flush();
                     await this.convertFrames();
-                    await this.videoFrames.finalize();
+                    await this.cache.finalize();
                     this.cleanup();
                     resolve();
                 };
@@ -93,15 +93,15 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
     public abstract paint(item: T, canvas: HTMLCanvasElement): Promise<void>;
 
     public async getFrame(idx: number, once: boolean): Promise<T> {
-        return await this.videoFrames.get(idx, once);
+        return await this.cache.get(idx, once);
     }
 
     public get length() {
-        return this.videoFrames.length;
+        return this.cache.length;
     }
 
     public async setDirection(dir: -1 | 1) {
-        await this.videoFrames.setDirection(dir);
+        await this.cache.setDirection(dir);
     }
 }
 
@@ -110,7 +110,7 @@ export class BlobVideoSource extends GenericVideoSource<Blob> {
 
     constructor() {
         super();
-        this.videoFrames = new LinearCache<Blob>(new PlainStorage<Blob>());
+        this.cache = new LinearCache<Blob>(new PlainStorage<Blob>());
     }
 
     protected handleVideoFrame(v: VideoFrame): void {
@@ -127,7 +127,7 @@ export class BlobVideoSource extends GenericVideoSource<Blob> {
                 const size = v.allocationSize(options);
                 const buffer = new Uint8ClampedArray(size);
                 await v.copyTo(buffer, options);
-                this.videoFrames.push(i, new Blob([buffer]));
+                this.cache.push(i, new Blob([buffer]));
                 v.close();
                 console.log(`Frame ${i} / ${this.size} converted`);
             }),
@@ -159,12 +159,12 @@ export class PlainVideoSource extends GenericVideoSource<VideoFrame> {
 
     constructor() {
         super();
-        this.videoFrames = new PlainCache<VideoFrame>();
+        this.cache = new PlainCache<VideoFrame>();
     }
 
     protected handleVideoFrame(v: VideoFrame): void {
         console.log(`Frame ${this.i} / ${this.size} decoded`);
-        this.videoFrames.push(this.i++, v);
+        this.cache.push(this.i++, v);
     }
 
     protected async convertFrames(): Promise<any> {}
@@ -181,7 +181,7 @@ export class IndexedDBVideoSource extends GenericVideoSource<Uint8ClampedArray> 
 
     constructor() {
         super();
-        this.videoFrames = new LinearCache<Uint8ClampedArray>(new IndexedDBStorage<Uint8ClampedArray>(db, "frames"));
+        this.cache = new LinearCache<Uint8ClampedArray>(new IndexedDBStorage<Uint8ClampedArray>(db, "frames"));
     }
 
     protected handleVideoFrame(v: VideoFrame): void {
@@ -198,7 +198,7 @@ export class IndexedDBVideoSource extends GenericVideoSource<Uint8ClampedArray> 
                 const size = v.allocationSize(options);
                 const buffer = new Uint8ClampedArray(size);
                 await v.copyTo(buffer, options);
-                this.videoFrames.push(i, buffer);
+                this.cache.push(i, buffer);
                 v.close();
                 console.log(`Frame ${i} / ${this.size} converted`);
             }),
