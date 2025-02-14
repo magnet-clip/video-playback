@@ -310,11 +310,14 @@ const Mp4Content = () => {
     const [playing, setPlaying] = createSignal(false);
     const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
     const [frame, setFrame] = createSignal(0);
+    const [ready, setReady] = createSignal(false);
 
     createEffect(async () => {
+        setReady(false);
         const [{ content }, videoInfo] = await videoRepo.getVideo(hash());
         info = videoInfo;
         await videoManager.init(content);
+        setReady(true);
     });
 
     createEffect(on(dir, async () => await videoManager.setDirection(dir() === "fwd" ? 1 : -1)));
@@ -328,10 +331,37 @@ const Mp4Content = () => {
 
     const paint = async (idx: number, once: boolean = false) => {
         const s = await videoManager.getFrame(idx, once);
-        const c = canvas();
-        c.width = s.codedWidth;
-        c.height = s.codedHeight;
-        c.getContext("2d").drawImage(s, 0, 0);
+        const data = await s.arrayBuffer();
+        requestAnimationFrame(async () => {
+            const start = performance.now();
+            // console.log("paint", idx);
+            // const s = await videoManager.getFrame(idx, once);
+            const c = canvas();
+            // // In case of VideoFrame
+            // c.width = s.codedWidth;
+            // c.height = s.codedHeight;
+            // c.getContext("2d").drawImage(s, 0, 0);
+
+            // // In case of ImageData / Uint8ClampedArray
+            // c.width = 1920; //info.resolution[0];
+            // c.height = 1080; //info.resolution[1];
+            // c.getContext("2d").putImageData(
+            //     new ImageData(s, 1920, 1080, { colorSpace: "srgb" }), //info.resolution[0], info.resolution[1]),
+            //     0,
+            //     0,
+            // );
+
+            c.width = 1920; //info.resolution[0];
+            c.height = 1080; //info.resolution[1];
+            // const data = await s.arrayBuffer();
+            const arr = new Uint8ClampedArray(data);
+            c.getContext("2d").putImageData(
+                new ImageData(arr, 1920, 1080, { colorSpace: "srgb" }), //info.resolution[0], info.resolution[1]),
+                0,
+                0,
+            );
+            // console.log(`paint took ${performance.now() - start}ms`);
+        });
     };
 
     const play = () => {
@@ -365,15 +395,17 @@ const Mp4Content = () => {
             <canvas ref={setCanvas} style={{ width: "100%" }} />
             <div style={{ display: "flex", "flex-direction": "row", width: "100%", "align-items": "center" }}>
                 <span title="Step 1 frame back">
-                    <IconButton onClick={() => step(-1)}>
+                    <IconButton onClick={() => step(-1)} disabled={!ready()}>
                         <SkipPreviousIcon />
                     </IconButton>
                 </span>
                 <span title="Play / pause">
-                    <IconButton onClick={play}>{playing() ? <PauseIcon /> : <PlayArrowIcon />}</IconButton>
+                    <IconButton onClick={play} disabled={!ready()}>
+                        {playing() ? <PauseIcon /> : <PlayArrowIcon />}
+                    </IconButton>
                 </span>
                 <span title="Step 1 frame forth">
-                    <IconButton onClick={() => step(1)}>
+                    <IconButton onClick={() => step(1)} disabled={!ready()}>
                         <SkipNextIcon />
                     </IconButton>
                 </span>

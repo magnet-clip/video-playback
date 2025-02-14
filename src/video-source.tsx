@@ -1,5 +1,6 @@
 import mp4box, { DataStream, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
-import { ICache, LinearCache, PlainStorage } from "./array";
+import { ICache, IndexedDBStorage, LinearCache, PlainStorage } from "./array";
+import { db } from "./database";
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
     const trak = file.getTrackById(track.id) as any;
@@ -29,8 +30,11 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
 export class VideoSource {
-    private videoFrames: ICache<VideoFrame> = new LinearCache<VideoFrame>(new PlainStorage<VideoFrame>());
-    //new PlainCache<VideoFrame>();
+    private videoFrames: ICache<Blob> = new LinearCache<Blob>(new PlainStorage<Blob>());
+    // private videoFrames: ICache<Uint8ClampedArray> = new LinearCache<Uint8ClampedArray>(
+    //     new IndexedDBStorage<Uint8ClampedArray>(db, "frames"),
+    // );
+    // private videoFrames: ICache<VideoFrame> = new PlainCache<VideoFrame>();
 
     public async init(content: ArrayBuffer): Promise<void> {
         const file = mp4box.createFile(false);
@@ -44,29 +48,75 @@ export class VideoSource {
                     codedWidth: track.video.width,
                     description: description(file, track),
                 };
+                let i = 0;
+                // TODO save all frames to array and then map to promises and promise.all!
+
+                // TODO very low mem consumption and high speed
+
+                // TODO drawback: requestAnimationFrame
+                const samples: [number, VideoFrame][] = [];
+                const convertFrames = () => {
+                    console.log(`Got ${samples.length} vs ${track.nb_samples} expected`);
+                    return Promise.all(
+                        samples.map(async ([i, v]) => {
+                            const options: VideoFrameCopyToOptions = {
+                                format: "RGBA",
+                            };
+                            const size = v.allocationSize(options);
+                            const buffer = new Uint8ClampedArray(size);
+                            await v.copyTo(buffer, options);
+                            this.videoFrames.push(i, new Blob([buffer]));
+                            v.close();
+                            console.log(`Frame ${i} converted`);
+                        }),
+                    );
+                };
+
                 const decoder = new VideoDecoder({
                     output: (v) => {
-                        // TODO: less frames than samples
-                        // TODO: v.copyTo (ArrayBuffer / Uint8ClampedArray)
-                        this.videoFrames.push(v);
+                        console.log(`Frame ${i} decoded`);
+                        samples.push([i++, v]);
+                        // Raw frames
+                        // this.videoFrames.push(v);
+
+                        // Uint8array
+                        // const options: VideoFrameCopyToOptions = {
+                        //     format: "RGBA",
+                        // };
+                        // const size = v.allocationSize(options);
+                        // const buffer = new Uint8ClampedArray(size);
+                        // v.copyTo(buffer, options).then(() => {
+                        //     this.videoFrames.push(buffer);
+                        //     v.close();
+                        // });
+
+                        // Blob
+                        // const options: VideoFrameCopyToOptions = {
+                        //     format: "RGBA",
+                        // };
+                        // const size = v.allocationSize(options);
+                        // const buffer = new Uint8ClampedArray(size);
+                        // v.copyTo(buffer, options).then(() => {
+                        //     this.videoFrames.push(i++, new Blob([buffer]));
+                        //     v.close();
+                        // });
                     },
                     error: console.error,
                 });
                 decoder.configure(config);
 
-                file.onSamples = (_id, _user, samples) => {
+                file.onSamples = async (_id, _user, samples) => {
                     file.stop();
                     file.flush();
-                    console.log("# samples: ", samples.length);
-                    console.log("# cts: ", new Set([...samples.map((s) => s.cts)]).size);
-                    console.log("# dts: ", new Set([...samples.map((s) => s.dts)]).size);
                     for (const s of samples) {
                         decoder.decode(sampleToChunk(s));
                     }
-                    decoder
-                        .flush()
-                        .then(() => this.videoFrames.init())
-                        .then(() => resolve());
+                    // TODO: perhaps decoding and conversion could be done in parallel
+                    // TODO: web worker ?
+                    await decoder.flush();
+                    await convertFrames();
+                    await this.videoFrames.init();
+                    resolve();
                 };
                 file.setExtractionOptions(track.id, track);
                 file.start();
@@ -76,7 +126,7 @@ export class VideoSource {
         });
     }
 
-    public async getFrame(idx: number, once: boolean): Promise<VideoFrame> {
+    public async getFrame(idx: number, once: boolean): Promise<Blob> {
         return await this.videoFrames.get(idx, once);
     }
 

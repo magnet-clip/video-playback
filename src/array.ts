@@ -1,10 +1,12 @@
+import { IDBPDatabase } from "idb";
+
 const BUFFER = 15;
 const TOTAL = 2 * BUFFER + 1;
 const THRESHOLD = 5;
 
 export interface IStorage<T> {
     getRange(from: number, to: number): AsyncGenerator<T, undefined, void>;
-    push(data: T): Promise<void>;
+    push(idx: number, data: T): Promise<void>;
     get(idx: number): Promise<T>;
     get length(): number;
 }
@@ -35,8 +37,8 @@ export class PlainStorage<T> implements IStorage<T> {
         }
     }
 
-    public async push(data: T): Promise<void> {
-        this.items.push(data);
+    public async push(idx: number, data: T): Promise<void> {
+        this.items[idx] = data;
     }
 
     public async get(idx: number): Promise<T> {
@@ -48,10 +50,62 @@ export class PlainStorage<T> implements IStorage<T> {
     }
 }
 
+export interface IRepo<T> {}
+
+export class IndexedDBStorage<T> implements IStorage<T> {
+    private count = 0;
+
+    public static addTableMigration(db: IDBPDatabase, name: string) {
+        const videoInfo = db.createObjectStore(name, {
+            keyPath: "idx",
+        });
+        videoInfo.createIndex("idx", "idx");
+    }
+
+    constructor(private db: IDBPDatabase, private table: string) {
+        db.clear(table);
+    }
+
+    public async push(idx: number, data: T): Promise<void> {
+        this.count += 1;
+        await this.db.add(this.table, { idx, content: data });
+    }
+
+    public async get(idx: number): Promise<T> {
+        const res = await this.db.get(this.table, (idx + this.count) % this.count);
+        return res?.content as T;
+    }
+
+    public async *getRange(from: number, to: number): AsyncGenerator<T, undefined, void> {
+        const count = this.count;
+        from = (from + count) % count;
+        to = (to + count) % count;
+        const t = this.db.transaction(this.table, "readonly");
+        if (from <= to) {
+            for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(from, to))) {
+                yield item.value.content;
+            }
+        } else {
+            for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(from, count - 1))) {
+                // for (const item of await this.db.getAllFromIndex(this.table, "idx", IDBKeyRange.bound(from, count - 1))) {
+                yield item.value.content;
+            }
+            for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(0, to))) {
+                // for (const item of await this.db.getAllFromIndex(this.table, "idx", IDBKeyRange.bound(0, to))) {
+                yield item.value.content;
+            }
+        }
+    }
+
+    get length(): number {
+        return this.count;
+    }
+}
+
 export interface ICache<T> {
     setDirection(d: -1 | 1): Promise<void>;
     init(): Promise<void>;
-    push(data: T): Promise<void>;
+    push(idx: number, data: T): Promise<void>;
     get(idx: number, once: boolean): Promise<T>;
     get length(): number;
 }
@@ -136,7 +190,7 @@ export class LinearCache<T> implements ICache<T> {
     public async get(idx: number, once: boolean): Promise<T> {
         if (!once) {
             await this.prefetch(idx);
-            console.log(`${idx} / ${this.itemsInCache}`);
+            // console.log(`${idx} / ${this.itemsInCache}`);
             const res = this.items[idx];
             // if (res.timestamp / 40000 !== idx) {
             //     console.error("AAA ", idx);
@@ -153,8 +207,8 @@ export class LinearCache<T> implements ICache<T> {
     }
 
     // TODO these 2 can be removed as they proxy storage which is exposed already
-    public async push(data: T): Promise<void> {
-        await this.storage.push(data);
+    public async push(idx: number, data: T): Promise<void> {
+        await this.storage.push(idx, data);
     }
 
     public get length(): number {
@@ -165,8 +219,8 @@ export class LinearCache<T> implements ICache<T> {
 export class PlainCache<T> implements ICache<T> {
     private frames: T[] = [];
 
-    public async push(data: T): Promise<void> {
-        this.frames.push(data);
+    public async push(idx: number, data: T): Promise<void> {
+        this.frames[idx] = data;
     }
 
     public async init() {}

@@ -1,11 +1,12 @@
 import { openDB } from "idb";
 import { VideoData, VideoInfo } from "./App";
+import { IndexedDBStorage } from "./array";
 
-const LAST_DB_VERSION = 1;
+const LAST_DB_VERSION = 2;
 const VIDEO_INFO_TABLE = "video-info"; // hash -> arraybuffer
 const VIDEO_DATA_TABLE = "video-data"; // hash -> fps, resolution, num of frames, size
 
-const db = await openDB("playback", LAST_DB_VERSION, {
+export const db = await openDB("playback", LAST_DB_VERSION, {
     upgrade: (db, oldVer, newVer) => {
         if (oldVer <= 1) {
             const videoInfo = db.createObjectStore(VIDEO_INFO_TABLE, {
@@ -16,6 +17,9 @@ const db = await openDB("playback", LAST_DB_VERSION, {
                 keyPath: "hash",
             });
             videoData.createIndex("hash", "hash");
+        }
+        if (oldVer <= 2) {
+            IndexedDBStorage.addTableMigration(db, "frames");
         }
     },
 });
