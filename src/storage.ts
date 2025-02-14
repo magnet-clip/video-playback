@@ -39,8 +39,10 @@ export class PlainStorage<T> extends GenericStorage<T> {
     public async *getRangeImpl(from: number, to: number, direction: -1 | 1): AsyncGenerator<T, undefined, void> {
         from = (from + this.items.length) % this.items.length;
         to = (to + this.items.length) % this.items.length;
-        for (let i = from; i <= to; i++) {
-            yield this.items[i];
+        if (direction === 1) {
+            for (let i = from; i <= to; i++) yield this.items[i];
+        } else {
+            for (let i = to; i >= from; i--) yield this.items[i];
         }
     }
 
@@ -78,7 +80,7 @@ export class IndexedDBStorage<T> extends GenericStorage<T> {
     }
 
     public async push(idx: number, data: T): Promise<void> {
-        await this.db.add(this.table, { idx, ridx: this.count - idx, content: data });
+        await this.db.add(this.table, { idx, ridx: this.count - idx - 1, content: data });
     }
 
     public async get(idx: number): Promise<T> {
@@ -88,8 +90,16 @@ export class IndexedDBStorage<T> extends GenericStorage<T> {
 
     public async *getRangeImpl(from: number, to: number, direction: -1 | 1): AsyncGenerator<T, undefined, void> {
         const t = this.db.transaction(this.table, "readonly");
-        for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(from, to))) {
-            yield item.value.content;
+        if (direction === 1) {
+            for await (const item of t.store.index("idx").iterate(IDBKeyRange.bound(from, to))) {
+                yield item.value.content;
+            }
+        } else {
+            for await (const item of t.store
+                .index("ridx")
+                .iterate(IDBKeyRange.bound(this.count - to - 1, this.count - from - 1))) {
+                yield item.value.content;
+            }
         }
     }
 

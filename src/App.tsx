@@ -305,8 +305,8 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    // const videoManager = new IndexedDBVideoSource(); // worst, long init()
-    const videoManager = new BlobVideoSource(); // fine
+    const videoManager = new IndexedDBVideoSource(); // worst, long init()
+    // const videoManager = new BlobVideoSource(); // fine
     // const videoManager = new PlainVideoSource(); // best, but memory consumig, good for short videos <= 30-50 frames
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);

@@ -64,12 +64,12 @@ export class LinearCache<T> implements ICache<T> {
                 if (delta >= THRESHOLD) return;
 
                 const newStart = this.clamp(this.firstIdx - BUFFER);
-                let p = newStart;
                 if (newStart >= this.firstIdx) return;
 
                 console.log(`Prefetch: fetch from ${newStart} to ${this.firstIdx - 1}`);
+                let p = this.firstIdx - 1;
                 for await (const t of this.storage.getRange(newStart, this.firstIdx - 1, this.direction)) {
-                    this.items[p++] = t;
+                    this.items[p--] = t;
                     if (this.itemsInCache > TOTAL) delete this.items[this.lastIdx];
                 }
             }
