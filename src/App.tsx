@@ -10,6 +10,7 @@ import SkipPreviousIcon from "@suid/icons-material/SkipPrevious";
 import PauseIcon from "@suid/icons-material/Pause";
 import mp4box, { MP4ArrayBuffer, MP4File } from "mp4box";
 import { BlobVideoSource, IndexedDBVideoSource, PlainVideoSource } from "./video-source";
+import { ArrayBufferPaint, BlobPaint } from "./paint";
 
 export type VideoInfo = {
     frames: number;
@@ -305,8 +306,9 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
 
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    // const videoManager = new IndexedDBVideoSource(); // lots of memory at init, long init, minor freezes during fetch
-    const videoManager = new BlobVideoSource(); // lots of memort at init, but longer frame times
+    const resize = 0.5;
+    // const videoManager = new BlobVideoSource(resize); // lots of memort at init, but longer frame times
+    const videoManager = new IndexedDBVideoSource(resize); // lots of memory at init, long init, minor freezes during fetch
     // const videoManager = new PlainVideoSource(); // best, but memory consumig, good for short videos <= 30-50 frames
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
@@ -314,6 +316,9 @@ const Mp4Content = () => {
     const [frame, setFrame] = createSignal(0);
     const [progress, setProgress] = createSignal(false);
     const [ready, setReady] = createSignal(false);
+
+    // const painter = new BlobPaint(canvas);
+    const painter = new ArrayBufferPaint(canvas);
 
     createEffect(async () => {
         setReady(false);
@@ -335,7 +340,7 @@ const Mp4Content = () => {
     const paint = async (idx: number, once: boolean = false) => {
         console.log(`Paint frame ${idx}`);
         const s = await videoManager.getFrame(idx, once);
-        await videoManager.paint(s, canvas());
+        await painter.paint(s);
     };
 
     let lastTime: number;
@@ -373,7 +378,7 @@ const Mp4Content = () => {
 
     return (
         <Show when={hash()}>
-            <canvas ref={setCanvas} style={{ width: "100%" }} width={1920} height={1080} />
+            <canvas ref={setCanvas} style={{ width: "100%" }} width={1920 * resize} height={1080 * resize} />
             <div style={{ display: "flex", "flex-direction": "row", width: "100%", "align-items": "center" }}>
                 <span title="Step 1 frame back">
                     <IconButton onClick={() => step(-1)} disabled={!ready()}>

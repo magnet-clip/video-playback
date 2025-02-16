@@ -2,6 +2,7 @@ import mp4box, { DataStream, MP4File, MP4Sample, MP4VideoTrack } from "mp4box";
 import { IndexedDBStorage, PlainStorage } from "./storage";
 import { db } from "./database";
 import { ICache, LinearCache, PlainCache } from "./cache";
+import { assert } from "./assert";
 
 const description = (file: MP4File, track: MP4VideoTrack): BufferSource => {
     const trak = file.getTrackById(track.id) as any;
@@ -36,8 +37,6 @@ export interface IVideoSource<T> {
     get length(): number;
     getFrame(idx: number, once: boolean): Promise<T>;
     setDirection(dir: -1 | 1): Promise<void>;
-
-    paint(item: T, canvas: HTMLCanvasElement): Promise<boolean>;
 }
 
 abstract class GenericVideoSource<T> implements IVideoSource<T> {
@@ -60,7 +59,7 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
                 this.size = track.nb_samples;
                 this.cache.prepare(this.size);
                 const decoder = new VideoDecoder({
-                    output: (v) => this.handleVideoFrame(v),
+                    output: (v) => this.handleVideoFrame(v), // this is sync, but conversion is not
                     error: console.error,
                 });
                 decoder.configure(config);
@@ -86,21 +85,10 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
             file.flush();
         });
     }
+
     protected abstract cleanup(): void;
     protected abstract convertFrames(): Promise<void>;
     protected abstract handleVideoFrame(v: VideoFrame): void;
-    protected abstract paintImpl(item: T, canvas: HTMLCanvasElement): Promise<void>;
-
-    public async paint(item: T, canvas: HTMLCanvasElement): Promise<boolean> {
-        // if (this.playing) {
-        //     console.warn("skip!");
-        //     return false;
-        // }
-        // this.playing = true;
-        await this.paintImpl(item, canvas);
-        // this.playing = false;
-        return true;
-    }
 
     public async getFrame(idx: number, once: boolean): Promise<T> {
         return await this.cache.get(idx, once);
@@ -115,12 +103,13 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
     }
 }
 
-export class BlobVideoSource extends GenericVideoSource<Blob> {
+abstract class ConvertibleVideoSource<T> extends GenericVideoSource<T> {
     private frames: VideoFrame[] = [];
 
-    constructor() {
+    constructor(protected resize: number) {
+        assert(resize !== null && resize !== undefined, `resize should be defined, got ${resize} instead`);
+        assert(resize > 0, `resize should be > 0, got ${resize} instead`);
         super();
-        this.cache = new LinearCache<Blob>(new PlainStorage<Blob>());
     }
 
     protected handleVideoFrame(v: VideoFrame): void {
@@ -128,39 +117,58 @@ export class BlobVideoSource extends GenericVideoSource<Blob> {
         this.frames.push(v);
     }
 
-    protected async convertFrames(): Promise<any> {
-        return Promise.all(
+    protected async convertFrames(): Promise<void> {
+        const canvas = document.createElement("canvas");
+        await Promise.all(
             this.frames.map(async (v, i) => {
-                const options: VideoFrameCopyToOptions = {
-                    format: "RGBA",
-                };
-                const size = v.allocationSize(options);
-                const buffer = new Uint8ClampedArray(size);
-                await v.copyTo(buffer, options);
-                this.cache.push(i, new Blob([buffer]));
+                let imData: ImageData = null;
+                if (this.resize !== 1) {
+                    canvas.width = v.displayWidth * this.resize;
+                    canvas.height = v.displayHeight * this.resize;
+                    canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
+                    imData = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);
+                } else {
+                    const options: VideoFrameCopyToOptions = {
+                        format: "RGBA",
+                    };
+                    const size = v.allocationSize(options);
+                    const buffer = new Uint8ClampedArray(size);
+                    await v.copyTo(buffer, options);
+                    imData = new ImageData(buffer, v.displayWidth, v.displayHeight, options);
+                }
                 v.close();
-                console.log(`Frame ${i} / ${this.size} converted`);
+                this.cache.push(i, this.convertFrame(imData));
+                console.log(`Frame ${i} / ${this.size} converted to image data`);
             }),
         );
     }
 
+    public abstract convertFrame(imData: ImageData): T;
+
     protected cleanup(): void {
         this.frames = [];
     }
+}
 
-    protected async paintImpl(item: Blob, canvas: HTMLCanvasElement): Promise<void> {
-        const start = performance.now();
-        return new Promise(async (resolve) => {
-            const data = await item.arrayBuffer();
-            requestAnimationFrame(() => {
-                const arr = new Uint8ClampedArray(data);
-                const imdata = new ImageData(arr, canvas.width, canvas.height, { colorSpace: "srgb" });
-                canvas.getContext("2d").putImageData(imdata, 0, 0);
-                console.log(`paint: ${performance.now() - start}ms`);
-                resolve(); // Resolve here causes timeouts
-            });
-            // resolve();
-        });
+export class BlobVideoSource extends ConvertibleVideoSource<Blob> {
+    constructor(resize: number = 1) {
+        super(resize);
+        this.cache = new LinearCache<Blob>(new PlainStorage<Blob>());
+    }
+
+    public convertFrame(buffer: ImageData): Blob {
+        return new Blob([buffer.data]);
+    }
+}
+
+export class IndexedDBVideoSource extends ConvertibleVideoSource<Uint8ClampedArray> {
+    constructor(resize: number = 1) {
+        super(resize);
+        this.cache = new LinearCache<Uint8ClampedArray>(new IndexedDBStorage<Uint8ClampedArray>(db, "frames"));
+    }
+
+    public convertFrame(buffer: ImageData): Uint8ClampedArray {
+        return buffer.data;
     }
 }
 
@@ -180,48 +188,4 @@ export class PlainVideoSource extends GenericVideoSource<VideoFrame> {
     protected async convertFrames(): Promise<any> {}
 
     protected cleanup(): void {}
-
-    protected async paintImpl(item: VideoFrame, canvas: HTMLCanvasElement): Promise<void> {
-        canvas.getContext("2d").drawImage(item, 0, 0);
-    }
-}
-
-export class IndexedDBVideoSource extends GenericVideoSource<Uint8ClampedArray> {
-    private frames: VideoFrame[] = [];
-
-    constructor() {
-        super();
-        this.cache = new LinearCache<Uint8ClampedArray>(new IndexedDBStorage<Uint8ClampedArray>(db, "frames"));
-    }
-
-    protected handleVideoFrame(v: VideoFrame): void {
-        console.log(`Frame ${this.frames.length} / ${this.size} decoded`);
-        this.frames.push(v);
-    }
-
-    protected async convertFrames(): Promise<any> {
-        return Promise.all(
-            this.frames.map(async (v, i) => {
-                const options: VideoFrameCopyToOptions = {
-                    format: "RGBA",
-                };
-                const size = v.allocationSize(options);
-                const buffer = new Uint8ClampedArray(size);
-                await v.copyTo(buffer, options);
-                this.cache.push(i, buffer);
-                v.close();
-                console.log(`Frame ${i} / ${this.size} converted`);
-            }),
-        );
-    }
-
-    protected cleanup(): void {
-        this.frames = [];
-    }
-
-    protected async paintImpl(item: Uint8ClampedArray<ArrayBufferLike>, canvas: HTMLCanvasElement): Promise<void> {
-        canvas
-            .getContext("2d")
-            .putImageData(new ImageData(item, canvas.width, canvas.height, { colorSpace: "srgb" }), 0, 0);
-    }
 }
