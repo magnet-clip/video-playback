@@ -1,5 +1,5 @@
 export interface IPaint<T> {
-    paint(source: T): Promise<void>;
+    paint(source: T, target?: HTMLCanvasElement): Promise<void>;
 }
 
 abstract class GenericPaint<T> implements IPaint<T> {
@@ -13,11 +13,11 @@ abstract class GenericPaint<T> implements IPaint<T> {
         }
     }
 
-    public abstract paint(source: T): Promise<void>;
+    public abstract paint(source: T, target?: HTMLCanvasElement): Promise<void>;
 }
 
 export class BlobPaint extends GenericPaint<Blob> {
-    public async paint(item: Blob): Promise<void> {
+    public async paint(item: Blob, target?: HTMLCanvasElement): Promise<void> {
         const start = performance.now();
         return new Promise(async (resolve) => {
             const data = await item.arrayBuffer();
@@ -26,7 +26,8 @@ export class BlobPaint extends GenericPaint<Blob> {
                 const imdata = new ImageData(arr, this.canvas.width, this.canvas.height, {
                     colorSpace: "srgb",
                 });
-                this.canvas.getContext("2d").putImageData(imdata, 0, 0);
+                const canvas = target || this.canvas;
+                canvas.getContext("2d").putImageData(imdata, 0, 0);
                 console.log(`paint: ${performance.now() - start}ms`);
                 // resolve(); // Resolve here causes timeouts
             });
@@ -36,11 +37,12 @@ export class BlobPaint extends GenericPaint<Blob> {
 }
 
 export class ArrayBufferPaint extends GenericPaint<Uint8ClampedArray> {
-    public async paint(item: Uint8ClampedArray<ArrayBufferLike>): Promise<void> {
+    public async paint(item: Uint8ClampedArray<ArrayBufferLike>, target?: HTMLCanvasElement): Promise<void> {
         const data = new ImageData(item, this.canvas.width, this.canvas.height, {
             colorSpace: "srgb",
         });
-        this.canvas.getContext("2d").putImageData(data, 0, 0);
+        const canvas = target || this.canvas;
+        canvas.getContext("2d").putImageData(data, 0, 0);
     }
 }
 
@@ -49,8 +51,9 @@ export class VideoFramePaint extends GenericPaint<VideoFrame> {
         super(_canvas);
     }
 
-    public async paint(source: VideoFrame): Promise<void> {
-        this.canvas.getContext("2d").drawImage(source, 0, 0);
+    public async paint(source: VideoFrame, target?: HTMLCanvasElement): Promise<void> {
+        const canvas = target || this.canvas;
+        canvas.getContext("2d").drawImage(source, 0, 0);
     }
 }
 
@@ -59,7 +62,8 @@ export class NativeVideoPaint extends GenericPaint<HTMLVideoElement> {
         super(_canvas);
     }
 
-    public async paint(source: HTMLVideoElement): Promise<void> {
-        this.canvas.getContext("2d").drawImage(source, 0, 0);
+    public async paint(source: HTMLVideoElement, target?: HTMLCanvasElement): Promise<void> {
+        const canvas = target || this.canvas;
+        canvas.getContext("2d").drawImage(source, 0, 0);
     }
 }

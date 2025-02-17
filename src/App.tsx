@@ -351,6 +351,7 @@ const Mp4Content = () => {
     let lastTime: number;
     let interval: number;
     const playFrame = async () => {
+        if (progress()) return;
         setProgress(true);
         if (playing()) {
             const next = getNextFrame(dir() === "fwd" ? 1 : -1);

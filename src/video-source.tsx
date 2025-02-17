@@ -32,7 +32,8 @@ const sampleToChunk = (sample: MP4Sample): EncodedVideoChunk =>
 type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
 export interface IVideoSource<T> {
-    init(content: ArrayBuffer): Promise<void>;
+    // TODO: onProgress
+    init(content: ArrayBuffer, onProgress: (stage: string, progress: number) => void): Promise<void>;
 
     get length(): number;
     getFrame(idx: number, once: boolean): Promise<T>;
@@ -175,8 +176,9 @@ export class IndexedDBVideoSource extends ConvertibleVideoSource<Uint8ClampedArr
 export class PlainVideoSource extends GenericVideoSource<VideoFrame> {
     private i = 0;
 
-    constructor() {
+    constructor(resize: number = 1.0) {
         super();
+        assert(resize === 1, `Resize is not supported`);
         this.cache = new PlainCache<VideoFrame>();
     }
 
@@ -193,7 +195,9 @@ export class PlainVideoSource extends GenericVideoSource<VideoFrame> {
 export class NativeVideoSource implements IVideoSource<HTMLVideoElement> {
     private video = document.createElement("video");
 
-    constructor(private fps: number) {}
+    constructor(private fps: number, resize: number = 1) {
+        assert(resize === 1, `Resize is not supported`);
+    }
 
     public async init(content: ArrayBuffer): Promise<void> {
         const blob = new Blob([content]);
