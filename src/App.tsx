@@ -9,8 +9,8 @@ import SkipNextIcon from "@suid/icons-material/SkipNext";
 import SkipPreviousIcon from "@suid/icons-material/SkipPrevious";
 import PauseIcon from "@suid/icons-material/Pause";
 import mp4box, { MP4ArrayBuffer, MP4File } from "mp4box";
-import { BlobVideoSource, IndexedDBVideoSource, PlainVideoSource } from "./video-source";
-import { ArrayBufferPaint, BlobPaint } from "./paint";
+import { BlobVideoSource, IndexedDBVideoSource, NativeVideoSource, PlainVideoSource } from "./video-source";
+import { ArrayBufferPaint, BlobPaint, NativeVideoPaint } from "./paint";
 
 export type VideoInfo = {
     frames: number;
@@ -28,7 +28,7 @@ export type VideoData = {
 const [update, setUpdate] = createSignal(0);
 const [hash, setHash] = createSignal<string>();
 const [mode, setMode] = createSignal<"mp4box" | "video">("mp4box");
-const [dir, setDir] = createSignal<"fwd" | "bwd">("bwd");
+const [dir, setDir] = createSignal<"fwd" | "bwd">("fwd");
 
 export const readFile = async (file: File): Promise<ArrayBuffer> => {
     return new Promise<ArrayBuffer>((resolve) => {
@@ -304,12 +304,16 @@ const Choose: Component<{ what: () => string; set: (v: string) => void; values: 
     );
 };
 
+const RESIZE = 1;
+
 const Mp4Content = () => {
     // Log.setLogLevel(Log.debug);
-    const resize = 0.5;
+
     // const videoManager = new BlobVideoSource(resize); // lots of memort at init, but longer frame times
-    const videoManager = new IndexedDBVideoSource(resize); // lots of memory at init, long init, minor freezes during fetch
+    // const videoManager = new IndexedDBVideoSource(resize); // lots of memory at init, long init, minor freezes during fetch
     // const videoManager = new PlainVideoSource(); // best, but memory consumig, good for short videos <= 30-50 frames
+    const videoManager = new NativeVideoSource(25);
+
     let info: VideoInfo;
     const [playing, setPlaying] = createSignal(false);
     const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
@@ -318,7 +322,8 @@ const Mp4Content = () => {
     const [ready, setReady] = createSignal(false);
 
     // const painter = new BlobPaint(canvas);
-    const painter = new ArrayBufferPaint(canvas);
+    // const painter = new ArrayBufferPaint(canvas);
+    const painter = new NativeVideoPaint(canvas);
 
     createEffect(async () => {
         setReady(false);
@@ -346,7 +351,6 @@ const Mp4Content = () => {
     let lastTime: number;
     let interval: number;
     const playFrame = async () => {
-        if (progress()) return;
         setProgress(true);
         if (playing()) {
             const next = getNextFrame(dir() === "fwd" ? 1 : -1);
@@ -378,7 +382,7 @@ const Mp4Content = () => {
 
     return (
         <Show when={hash()}>
-            <canvas ref={setCanvas} style={{ width: "100%" }} width={1920 * resize} height={1080 * resize} />
+            <canvas ref={setCanvas} style={{ width: "100%" }} width={1920 * RESIZE} height={1080 * RESIZE} />
             <div style={{ display: "flex", "flex-direction": "row", width: "100%", "align-items": "center" }}>
                 <span title="Step 1 frame back">
                     <IconButton onClick={() => step(-1)} disabled={!ready()}>

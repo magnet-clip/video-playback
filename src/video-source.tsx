@@ -189,3 +189,38 @@ export class PlainVideoSource extends GenericVideoSource<VideoFrame> {
 
     protected cleanup(): void {}
 }
+
+export class NativeVideoSource implements IVideoSource<HTMLVideoElement> {
+    private video = document.createElement("video");
+
+    constructor(private fps: number) {}
+
+    public async init(content: ArrayBuffer): Promise<void> {
+        const blob = new Blob([content]);
+        const url = URL.createObjectURL(blob);
+        return new Promise((resolve) => {
+            this.video.src = url;
+            this.video.onloadeddata = () => {
+                this.video.currentTime = 0;
+                resolve();
+            };
+        });
+    }
+
+    public get length(): number {
+        return Math.round(this.video.duration * this.fps);
+    }
+
+    public async getFrame(idx: number, once: boolean): Promise<HTMLVideoElement> {
+        // TODO handle `once` for preview purposes
+        const frameTime = idx / this.fps;
+        return new Promise((resolve) => {
+            this.video.currentTime = frameTime;
+            this.video.addEventListener("timeupdate", () => resolve(this.video), { once: true });
+        });
+    }
+
+    public async setDirection(dir: -1 | 1): Promise<void> {
+        assert(dir === 1, "Reverse playback not supported");
+    }
+}

@@ -1,5 +1,3 @@
-import { assert } from "./assert";
-
 export interface IPaint<T> {
     paint(source: T): Promise<void>;
 }
@@ -52,6 +50,16 @@ export class VideoFramePaint extends GenericPaint<VideoFrame> {
     }
 
     public async paint(source: VideoFrame): Promise<void> {
+        this.canvas.getContext("2d").drawImage(source, 0, 0);
+    }
+}
+
+export class NativeVideoPaint extends GenericPaint<HTMLVideoElement> {
+    constructor(_canvas: HTMLCanvasElement | (() => HTMLCanvasElement)) {
+        super(_canvas);
+    }
+
+    public async paint(source: HTMLVideoElement): Promise<void> {
         this.canvas.getContext("2d").drawImage(source, 0, 0);
     }
 }
