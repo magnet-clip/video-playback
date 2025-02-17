@@ -1,3 +1,4 @@
+import { assert } from "./assert";
 import { ArrayBufferPaint, BlobPaint, IPaint, NativeVideoPaint, VideoFramePaint } from "./paint";
 import {
     BlobVideoSource,
@@ -69,15 +70,20 @@ abstract class FrameBasedPlayer<T> implements IPlayer {
         await this.source.init(data, onProgress);
     }
 
-    private getNextFrame() {
-        let next = this.currentFrame + this.direction;
-        next += this.metadata.numFrames;
-        next %= this.metadata.numFrames;
-        return next;
+    private clampFrame(n: number) {
+        n += this.metadata.numFrames;
+        n %= this.metadata.numFrames;
+        return n;
     }
 
-    private async paintFrame(idx: number, once: boolean = false, target?: HTMLCanvasElement) {
-        if (this.painting || !this.playing) return false;
+    private getNextFrame(from: number) {
+        let next = from + this.direction;
+        return this.clampFrame(next);
+    }
+
+    private async paintFrame(idx: number, once: boolean = false, target?: HTMLCanvasElement): Promise<void> {
+        if (this.painting) return;
+        if (!once && !this.playing) return;
         this.painting = true;
         const startTime = performance.now();
 
@@ -86,11 +92,10 @@ abstract class FrameBasedPlayer<T> implements IPlayer {
 
         this.onFrame(idx, performance.now() - startTime);
         this.painting = false;
-        return true;
     }
 
     private async playFrame() {
-        const nextFrame = this.getNextFrame();
+        const nextFrame = this.getNextFrame(this.currentFrame);
         await this.paintFrame(nextFrame);
         this.currentFrame = nextFrame;
     }
@@ -107,8 +112,8 @@ abstract class FrameBasedPlayer<T> implements IPlayer {
     }
 
     public async goto(n: number): Promise<void> {
-        await this.paintFrame(n);
-        this.currentFrame = n;
+        this.currentFrame = this.clampFrame(n);
+        await this.paintFrame(this.currentFrame, true);
     }
 
     public async paint(n: number, target?: HTMLCanvasElement): Promise<void> {
@@ -145,32 +150,85 @@ export class InMemoryPlayer extends FrameBasedPlayer<VideoFrame> {
 }
 
 export class NativePlayer implements IPlayer {
-    initialize(
+    private source: NativeVideoSource;
+    private metadata: VideoMetadata;
+    private callbacks: number[] = [];
+
+    private playing: boolean = false;
+    private manualPause: boolean = false;
+
+    constructor(
+        protected _canvas: HTMLCanvasElement | (() => HTMLCanvasElement),
+        private onFrame: (idx: number, time: number) => void,
+    ) {}
+
+    public async initialize(
         data: ArrayBuffer,
         metadata: VideoMetadata,
         resize: number,
         onProgress: (stage: string, progress: number) => void,
     ): Promise<void> {
+        this.metadata = metadata;
+        this.source = new NativeVideoSource(metadata.fps, resize);
+        await this.source.init(data, onProgress);
+    }
+
+    private get video() {
+        return this.source.native;
+    }
+
+    private get canvas() {
+        return typeof this._canvas === "function" ? this._canvas() : this._canvas;
+    }
+
+    private cancelFrameCallbacks() {
+        while (this.callbacks.length > 0) {
+            this.video.cancelVideoFrameCallback(this.callbacks.pop());
+        }
+    }
+
+    private frameCallback(time: DOMHighResTimeStamp, meta: VideoFrameCallbackMetadata) {
+        this.onFrame(Math.round(meta.mediaTime * this.metadata.fps), null);
+        this.canvas.getContext("2d").drawImage(this.video, 0, 0);
+        this.callbacks.push(this.video.requestVideoFrameCallback((time, meta) => this.frameCallback(time, meta)));
+    }
+
+    public play(): void {
+        if (this.playing) return;
+        this.callbacks.push(this.video.requestVideoFrameCallback((time, meta) => this.frameCallback(time, meta)));
+        this.video.play();
+        this.video.addEventListener("pause", () => {
+            if (this.manualPause) {
+                this.playing = false;
+                this.cancelFrameCallbacks();
+            } else {
+                this.video.addEventListener(
+                    "timeupdate",
+                    () => {
+                        this.video.play();
+                    },
+                    { once: true },
+                );
+                this.video.currentTime = 0;
+            }
+            this.manualPause = false;
+        });
+    }
+
+    public pause(): void {
+        this.manualPause = true;
+        this.video.pause();
+    }
+
+    public async goto(n: number): Promise<void> {
         throw new Error("Method not implemented.");
     }
 
-    play(): void {
+    public async paint(n: number, target?: HTMLCanvasElement): Promise<void> {
         throw new Error("Method not implemented.");
     }
 
-    pause(): void {
-        throw new Error("Method not implemented.");
-    }
-
-    goto(n: number): Promise<void> {
-        throw new Error("Method not implemented.");
-    }
-
-    paint(n: number, target?: HTMLCanvasElement): Promise<void> {
-        throw new Error("Method not implemented.");
-    }
-
-    setDirection(direction: -1 | 1): void {
-        throw new Error("Method not implemented.");
+    public setDirection(direction: -1 | 1): void {
+        assert(direction === 1, "Reverse playback not supported");
     }
 }

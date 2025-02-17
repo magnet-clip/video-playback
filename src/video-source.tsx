@@ -33,7 +33,7 @@ type Mp4BoxBuffer = ArrayBuffer & { fileStart: number };
 
 export interface IVideoSource<T> {
     // TODO: onProgress
-    init(content: ArrayBuffer, onProgress: (stage: string, progress: number) => void): Promise<void>;
+    init(content: ArrayBuffer, onProgress?: (stage: string, progress: number) => void): Promise<void>;
 
     get length(): number;
     getFrame(idx: number, once: boolean): Promise<T>;
@@ -44,7 +44,7 @@ abstract class GenericVideoSource<T> implements IVideoSource<T> {
     protected cache: ICache<T>;
     protected size: number;
 
-    public async init(content: ArrayBuffer): Promise<void> {
+    public async init(content: ArrayBuffer, onProgress: (stage: string, progress: number) => void): Promise<void> {
         const file = mp4box.createFile(false);
         return new Promise((resolve) => {
             (content as any).fileStart = 0;
@@ -199,7 +199,11 @@ export class NativeVideoSource implements IVideoSource<HTMLVideoElement> {
         assert(resize === 1, `Resize is not supported`);
     }
 
-    public async init(content: ArrayBuffer): Promise<void> {
+    public get native() {
+        return this.video;
+    }
+
+    public async init(content: ArrayBuffer, onProgress?: (stage: string, progress: number) => void): Promise<void> {
         const blob = new Blob([content]);
         const url = URL.createObjectURL(blob);
         return new Promise((resolve) => {

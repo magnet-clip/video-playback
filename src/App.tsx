@@ -9,8 +9,7 @@ import SkipNextIcon from "@suid/icons-material/SkipNext";
 import SkipPreviousIcon from "@suid/icons-material/SkipPrevious";
 import PauseIcon from "@suid/icons-material/Pause";
 import mp4box, { MP4ArrayBuffer, MP4File } from "mp4box";
-import { BlobVideoSource, IndexedDBVideoSource, NativeVideoSource, PlainVideoSource } from "./video-source";
-import { ArrayBufferPaint, BlobPaint, NativeVideoPaint } from "./paint";
+import { ArrayBufferPlayer, BlobPlayer, InMemoryPlayer, IPlayer, NativeByFramePlayer, NativePlayer } from "./player";
 
 export type VideoInfo = {
     frames: number;
@@ -312,74 +311,103 @@ const Mp4Content = () => {
     // const videoManager = new BlobVideoSource(resize); // lots of memort at init, but longer frame times
     // const videoManager = new IndexedDBVideoSource(resize); // lots of memory at init, long init, minor freezes during fetch
     // const videoManager = new PlainVideoSource(); // best, but memory consumig, good for short videos <= 30-50 frames
-    const videoManager = new NativeVideoSource(25);
-
-    let info: VideoInfo;
-    const [playing, setPlaying] = createSignal(false);
-    const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
-    const [frame, setFrame] = createSignal(0);
-    const [progress, setProgress] = createSignal(false);
-    const [ready, setReady] = createSignal(false);
+    // const videoManager = new NativeVideoSource(25);
 
     // const painter = new BlobPaint(canvas);
     // const painter = new ArrayBufferPaint(canvas);
-    const painter = new NativeVideoPaint(canvas);
+    // const painter = new NativeVideoPaint(canvas);
+
+    let info: VideoInfo;
+
+    const [playing, setPlaying] = createSignal(false);
+    const [canvas, setCanvas] = createSignal<HTMLCanvasElement>();
+    const [frame, setFrame] = createSignal(0);
+    const [ready, setReady] = createSignal(false);
+
+    const handleFrame = (idx: number, time: number) => {
+        console.log(idx, time);
+        setFrame(idx);
+    };
+
+    // const player: IPlayer = new BlobPlayer(canvas, handleFrame);
+    // const player: IPlayer = new ArrayBufferPlayer(canvas, handleFrame);
+    // const player: IPlayer = new NativeByFramePlayer(canvas, handleFrame);
+    // const player: IPlayer = new InMemoryPlayer(canvas, handleFrame);
+    const player: IPlayer = new NativePlayer(canvas, handleFrame);
+
+    const play = () => {
+        if (playing()) {
+            player.pause();
+        } else {
+            player.play();
+        }
+        setPlaying(!playing());
+    };
+
+    const step = (n: number) => {
+        player.goto(frame() + n);
+    };
 
     createEffect(async () => {
         setReady(false);
         const [{ content }, videoInfo] = await videoRepo.getVideo(hash());
         info = videoInfo;
-        await videoManager.init(content);
+        await player.initialize(
+            content,
+            { fps: videoInfo.fps, numFrames: videoInfo.frames, width: 1920, height: 1080 },
+            1,
+            () => {},
+        );
         setReady(true);
     });
 
-    createEffect(on(dir, async () => await videoManager.setDirection(dir() === "fwd" ? 1 : -1)));
+    createEffect(on(dir, async () => player.setDirection(dir() === "fwd" ? 1 : -1)));
 
-    const getNextFrame = (dir: number) => {
-        let next = frame() + dir;
-        next += videoManager.length;
-        next %= videoManager.length;
-        return next;
-    };
+    // const getNextFrame = (dir: number) => {
+    //     let next = frame() + dir;
+    //     next += videoManager.length;
+    //     next %= videoManager.length;
+    //     return next;
+    // };
 
-    const paint = async (idx: number, once: boolean = false) => {
-        console.log(`Paint frame ${idx}`);
-        const s = await videoManager.getFrame(idx, once);
-        await painter.paint(s);
-    };
+    // const paint = async (idx: number, once: boolean = false) => {
+    //     console.log(`Paint frame ${idx}`);
+    //     const s = await videoManager.getFrame(idx, once);
+    //     await painter.paint(s);
+    // };
 
-    let lastTime: number;
-    let interval: number;
-    const playFrame = async () => {
-        if (progress()) return;
-        setProgress(true);
-        if (playing()) {
-            const next = getNextFrame(dir() === "fwd" ? 1 : -1);
-            await paint(next);
-            console.log(`${next}: ${Math.round(performance.now() - lastTime)}ms`);
-            lastTime = performance.now();
-            setFrame(next);
-        } else {
-            clearInterval(interval);
-        }
-        setProgress(false);
-    };
+    // let lastTime: number;
+    // let interval: number;
+    // const playFrame = async () => {
+    //     if (progress()) return;
+    //     setProgress(true);
+    //     if (playing()) {
+    //         const next = getNextFrame(dir() === "fwd" ? 1 : -1);
+    //         await paint(next);
+    //         console.log(`${next}: ${Math.round(performance.now() - lastTime)}ms`);
+    //         lastTime = performance.now();
+    //         setFrame(next);
+    //     } else {
+    //         clearInterval(interval);
+    //     }
+    //     setProgress(false);
+    // };
 
-    const play = () => {
-        if (playing()) {
-            setPlaying(false);
-        } else {
-            setPlaying(true);
-            lastTime = performance.now();
-            interval = setInterval(playFrame, Math.round(1000 / info.fps));
-        }
-    };
+    // const play = () => {
+    //     if (playing()) {
+    //         setPlaying(false);
+    //     } else {
+    //         setPlaying(true);
+    //         lastTime = performance.now();
+    //         interval = setInterval(playFrame, Math.round(1000 / info.fps));
+    //     }
+    // };
 
-    const step = async (dir: number) => {
-        const next = getNextFrame(dir);
-        await paint(next, true);
-        setFrame(next);
-    };
+    // const step = async (dir: number) => {
+    //     const next = getNextFrame(dir);
+    //     await paint(next, true);
+    //     setFrame(next);
+    // };
 
     return (
         <Show when={hash()}>
