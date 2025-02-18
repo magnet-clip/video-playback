@@ -1,12 +1,6 @@
 import { assert } from "./assert";
 import { ArrayBufferPaint, BlobPaint, IPaint, NativeVideoPaint, VideoFramePaint } from "./paint";
-import {
-    BlobVideoSource,
-    IndexedDBVideoSource,
-    IVideoSource,
-    NativeVideoSource,
-    PlainVideoSource,
-} from "./video-source";
+import { BlobVideoSource, IndexedDBVideoSource, IVideoSource, NativeVideoSource, PlainVideoSource } from "./source";
 
 export type VideoMetadata = {
     fps: number;
@@ -197,7 +191,7 @@ export class NativePlayer implements IPlayer {
         if (this.playing) return;
         this.callbacks.push(this.video.requestVideoFrameCallback((time, meta) => this.frameCallback(time, meta)));
         this.video.play();
-        this.video.addEventListener("pause", () => {
+        this.video.onpause = () => {
             if (this.manualPause) {
                 this.playing = false;
                 this.cancelFrameCallbacks();
@@ -212,7 +206,7 @@ export class NativePlayer implements IPlayer {
                 this.video.currentTime = 0;
             }
             this.manualPause = false;
-        });
+        };
     }
 
     public pause(): void {
@@ -221,10 +215,22 @@ export class NativePlayer implements IPlayer {
     }
 
     public async goto(n: number): Promise<void> {
-        throw new Error("Method not implemented.");
+        return new Promise((resolve) => {
+            this.video.addEventListener(
+                "timeupdate",
+                async () => {
+                    this.canvas.getContext("2d").drawImage(this.video, 0, 0);
+                    resolve();
+                },
+                { once: true },
+            );
+            this.video.currentTime = n / this.metadata.fps;
+        });
     }
 
     public async paint(n: number, target?: HTMLCanvasElement): Promise<void> {
+        // TODO this is once-off => I need to load video separately and get a frame and unload
+        // Or, otherwise, navigate to frame, get it, and come back (?)
         throw new Error("Method not implemented.");
     }
 
